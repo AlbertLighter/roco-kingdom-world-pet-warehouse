@@ -19,6 +19,12 @@
 - **数据可视化**：提供前端 Web 界面，直观查看宠物库和推荐结果。
 - **本地化存储**：使用 SQLite 存储数据，支持历史记录和离线分析。
 
+## 📸 界面预览 (Screenshots)
+
+| 个人仓库同步 | 繁育推荐中心 |
+| :---: | :---: |
+| ![仓库截图](docs/img/warehouse.png) | ![繁育截图](docs/img/breeding.png) |
+
 ## 🛠️ 技术栈
 
 - **后端**: Python 3.10+, FastAPI, SQLite
