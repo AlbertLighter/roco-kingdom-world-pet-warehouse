@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>洛克王国：世界 宠物仓库</title>
+    <link rel="stylesheet" href="style.css?v=2">
+</head>
+<body>
+    <div id="app">
+        <header>
+            <h1>洛克王国：世界 宠物仓库</h1>
+            <div class="search-bar">
+                <input type="text" id="searchInput" placeholder="搜索宠物名称...">
+                <button id="searchBtn">搜索</button>
+            </div>
+            <a href="breeding.html" class="nav-btn" style="margin-top: 10px; text-decoration: none; display: inline-block; background: #3498db; color: white; padding: 10px 20px; border-radius: 4px;">进入繁育中心</a>
+        </header>
+
+        <main>
+            <div id="petList" class="pet-grid">
+                <!-- 宠物卡片将在这里动态生成 -->
+            </div>
+            <div class="pagination">
+                <button id="prevBtn">上一页</button>
+                <span id="pageInfo">第 1 页</span>
+                <button id="nextBtn">下一页</button>
+            </div>
+        </main>
+    </div>
+    <script src="app.js?v=2"></script>
+</body>
+</html>

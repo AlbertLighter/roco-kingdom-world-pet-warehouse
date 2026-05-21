@@ -1,0 +1,52 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.ipynb_checkpoints
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv
+env/
+venv/
+ENV/
+
+# Local databases
+warehouse.db
+warehouse.db-journal
+
+# Environment variables (Sensitive data)
+.env
+.env.*
+
+# MacOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+.history/
+chat
+todo
+
+# Network capture tools / Sensitive data docs
+docs/reqable/
+captures/
+*.har
+
+# Frontend (Optional but good to have)
+node_modules/
+.npm/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
