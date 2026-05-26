@@ -10,11 +10,24 @@
     <div id="app">
         <header>
             <h1>洛克王国：世界 宠物仓库</h1>
+            <div id="refreshTimeDisplay" style="font-size: 0.9em; color: rgba(255,255,255,0.8); margin: 5px 0;">
+                🕐 宠物刷新时间：<span id="refreshTimeValue">加载中...</span>
+            </div>
             <div class="search-bar">
                 <input type="text" id="searchInput" placeholder="搜索宠物名称...">
                 <button id="searchBtn">搜索</button>
             </div>
-            <a href="breeding.html" class="nav-btn" style="margin-top: 10px; text-decoration: none; display: inline-block; background: #3498db; color: white; padding: 10px 20px; border-radius: 4px;">进入繁育中心</a>
+            <div style="margin-top: 10px; display: flex; justify-content: center; gap: 10px; align-items: center;">
+                <a href="breeding.html" class="nav-btn" style="text-decoration: none; display: inline-block; background: #3498db; color: white; padding: 10px 20px; border-radius: 4px;">进入繁育中心</a>
+                <button id="syncBtn" style="padding: 10px 20px; background: #27ae60; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">同步精灵</button>
+            </div>
+            <div id="syncProgress" style="display: none; margin-top: 12px; padding: 0 20px;">
+                <div style="background: rgba(255,255,255,0.15); border-radius: 4px; overflow: hidden; height: 22px; position: relative;">
+                    <div id="syncProgressBar" style="height: 100%; background: linear-gradient(90deg, #2ecc71, #27ae60); width: 0%; transition: width 0.3s ease; border-radius: 4px;"></div>
+                    <span id="syncProgressText" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 0.85em; color: white; text-shadow: 0 1px 2px rgba(0,0,0,0.3);">0%</span>
+                </div>
+                <div id="syncLog" style="margin-top: 8px; max-height: 120px; overflow-y: auto; font-size: 0.85em; color: rgba(255,255,255,0.85); text-align: left; padding: 0 4px;"></div>
+            </div>
         </header>
 
         <main>

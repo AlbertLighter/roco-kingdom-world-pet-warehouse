@@ -1,12 +1,24 @@
 import sqlite3
 import json
 import itertools
+import queue
+import threading
+import sys
+import os
+import time
 from fastapi import FastAPI, Query, HTTPException, Body
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional, List
 
+# Add project root to path so we can import scripts
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 app = FastAPI()
+
+# Global lock to prevent concurrent sync runs
+_sync_lock = threading.Lock()
 
 # 允许跨域
 app.add_middleware(
@@ -364,6 +376,109 @@ def recommend_parents(
     
     conn.close()
     return recommendations[:10]
+
+@app.post("/api/sync")
+def sync_pets():
+    """Stream pet sync progress via SSE."""
+    # Check cooldown based on pet refresh time
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT value FROM settings WHERE key = 'refresh_deadline'")
+    row = cursor.fetchone()
+    conn.close()
+
+    if row:
+        deadline = float(row[0])
+        remaining = deadline - time.time()
+        if remaining > 0:
+            deadline_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(deadline))
+            raise HTTPException(status_code=429, detail={
+                "message": f"宠物尚未刷新，刷新时间: {deadline_str}",
+                "remaining_seconds": int(remaining)
+            })
+
+    if not _sync_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="同步任务正在运行中")
+
+    def event_stream():
+        progress_queue = queue.Queue()
+
+        def progress_callback(message, current=0, total=0):
+            progress_queue.put({
+                "message": message,
+                "current": current,
+                "total": total
+            })
+
+        def run_sync_task():
+            try:
+                from scripts.fetcher import run_sync
+                result = run_sync(progress_callback=progress_callback)
+                progress_queue.put({"done": True, "result": result})
+            except Exception as e:
+                progress_queue.put({"done": True, "error": str(e)})
+            finally:
+                _sync_lock.release()
+
+        thread = threading.Thread(target=run_sync_task, daemon=True)
+        thread.start()
+
+        while True:
+            try:
+                msg = progress_queue.get(timeout=60)
+            except queue.Empty:
+                yield f"data: {json.dumps({'message': '心跳...', 'current': 0, 'total': 0})}\n\n"
+                continue
+
+            if msg.get("done"):
+                if msg.get("error"):
+                    yield f"data: {json.dumps({'error': msg['error']})}\n\n"
+                else:
+                    yield f"data: {json.dumps({'done': True, 'result': msg.get('result', {})})}\n\n"
+                break
+            else:
+                yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.get("/api/sync_status")
+def get_sync_status():
+    """Get sync cooldown status based on pet refresh time."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT value FROM settings WHERE key = 'refresh_deadline'")
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        return {"cooldown_active": False, "can_sync": True}
+
+    deadline = float(row[0])
+    remaining = deadline - time.time()
+
+    if remaining <= 0:
+        return {"cooldown_active": False, "can_sync": True}
+
+    return {
+        "cooldown_active": True,
+        "can_sync": False,
+        "remaining_seconds": int(remaining)
+    }
+
+
+@app.get("/api/refresh_time")
+def get_refresh_time():
+    """Get the stored pet refresh time."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT value FROM settings WHERE key = 'refresh_time'")
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return {"refresh_time": row[0]}
+    return {"refresh_time": None}
+
 
 # 挂载前端静态文件
 app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")

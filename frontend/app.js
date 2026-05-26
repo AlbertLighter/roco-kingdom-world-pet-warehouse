@@ -7,6 +7,21 @@ const searchBtn = document.getElementById('searchBtn');
 const prevBtn = document.getElementById('prevBtn');
 const nextBtn = document.getElementById('nextBtn');
 const pageInfo = document.getElementById('pageInfo');
+const refreshTimeValue = document.getElementById('refreshTimeValue');
+
+async function fetchRefreshTime() {
+    try {
+        const response = await fetch('/api/refresh_time');
+        const data = await response.json();
+        if (data.refresh_time) {
+            refreshTimeValue.textContent = data.refresh_time;
+        } else {
+            refreshTimeValue.textContent = '暂无数据（请先同步）';
+        }
+    } catch (error) {
+        refreshTimeValue.textContent = '获取失败';
+    }
+}
 
 async function fetchPets() {
     const name = searchInput.value;
@@ -213,6 +228,162 @@ nextBtn.addEventListener('click', () => {
     fetchPets();
 });
 
+// Sync button logic
+const syncBtn = document.getElementById('syncBtn');
+const syncProgress = document.getElementById('syncProgress');
+const syncProgressBar = document.getElementById('syncProgressBar');
+const syncProgressText = document.getElementById('syncProgressText');
+const syncLog = document.getElementById('syncLog');
+
+let cooldownTimer = null;
+
+function formatTime(seconds) {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    if (h > 0) {
+        return `${h}小时${m}分${s}秒`;
+    } else if (m > 0) {
+        return `${m}分${s}秒`;
+    } else {
+        return `${s}秒`;
+    }
+}
+
+function startCooldown(remainingSeconds) {
+    syncBtn.disabled = true;
+    syncBtn.style.background = '#95a5a6';
+    syncBtn.style.cursor = 'not-allowed';
+    
+    function updateTimer() {
+        if (remainingSeconds <= 0) {
+            clearInterval(cooldownTimer);
+            cooldownTimer = null;
+            syncBtn.disabled = false;
+            syncBtn.style.background = '#27ae60';
+            syncBtn.style.cursor = 'pointer';
+            syncBtn.textContent = '同步精灵';
+            return;
+        }
+        syncBtn.textContent = `冷却中 (${formatTime(remainingSeconds)})`;
+        remainingSeconds--;
+    }
+    
+    updateTimer();
+    cooldownTimer = setInterval(updateTimer, 1000);
+}
+
+async function checkSyncStatus() {
+    try {
+        const response = await fetch('/api/sync_status');
+        const data = await response.json();
+        
+        if (data.cooldown_active) {
+            startCooldown(data.remaining_seconds);
+        }
+    } catch (error) {
+        console.error('Failed to check sync status:', error);
+    }
+}
+
+syncBtn.addEventListener('click', async () => {
+    syncBtn.disabled = true;
+    syncBtn.style.background = '#95a5a6';
+    syncBtn.textContent = '同步中...';
+    syncProgress.style.display = 'block';
+    syncLog.innerHTML = '';
+    syncProgressBar.style.width = '0%';
+    syncProgressText.textContent = '0%';
+
+    try {
+        const response = await fetch('/api/sync', { method: 'POST' });
+
+        if (!response.ok) {
+            const err = await response.json();
+            if (response.status === 429) {
+                addSyncLog(`❌ ${err.detail.message}`);
+                startCooldown(err.detail.remaining_seconds);
+            } else {
+                addSyncLog(`❌ ${err.detail?.message || err.detail || '同步失败'}`);
+                resetSyncBtn();
+            }
+            return;
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    try {
+                        const data = JSON.parse(line.slice(6));
+                        handleSyncEvent(data);
+                    } catch (e) {
+                        // ignore parse errors
+                    }
+                }
+            }
+        }
+    } catch (error) {
+        addSyncLog(`❌ 网络错误: ${error.message}`);
+    }
+
+    resetSyncBtn();
+});
+
+function handleSyncEvent(data) {
+    if (data.error) {
+        addSyncLog(`❌ 错误: ${data.error}`);
+        return;
+    }
+
+    if (data.done) {
+        syncProgressBar.style.width = '100%';
+        syncProgressText.textContent = '100%';
+        const r = data.result || {};
+        addSyncLog(`✅ 同步完成！新增 ${r.new || 0} 只，更新 ${r.updated || 0} 只，共 ${r.total || 0} 只`);
+        fetchPets();
+        fetchRefreshTime();
+        // Check cooldown from API (based on pet refresh time)
+        checkSyncStatus();
+        return;
+    }
+
+    const { message, current, total } = data;
+    addSyncLog(message);
+
+    if (total > 0) {
+        const pct = Math.round((current / total) * 100);
+        syncProgressBar.style.width = `${pct}%`;
+        syncProgressText.textContent = `${pct}% (${current}/${total})`;
+    }
+}
+
+function addSyncLog(text) {
+    const line = document.createElement('div');
+    line.textContent = text;
+    line.style.padding = '1px 0';
+    syncLog.appendChild(line);
+    syncLog.scrollTop = syncLog.scrollHeight;
+}
+
+function resetSyncBtn() {
+    syncBtn.disabled = false;
+    syncBtn.style.background = '#27ae60';
+    syncBtn.textContent = '同步精灵';
+}
+
 // Initial fetch
 fetchPets();
+fetchRefreshTime();
+checkSyncStatus();
 window.setGender = setGender; // 暴露给 HTML onclick
