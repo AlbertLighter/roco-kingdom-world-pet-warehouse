@@ -22,7 +22,7 @@ except ImportError:
 # Resolve paths relative to project root
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(PROJECT_ROOT, "warehouse.db")
-DOCS_DIR = os.path.join(PROJECT_ROOT, "docs")
+CONF_DIR = os.path.join(PROJECT_ROOT, "roco_kingdom_world_conf")
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -202,6 +202,34 @@ def init_db():
     )
     """)
 
+    # Create egg_group_mapping table (egg_group_int ID -> name)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS egg_group_mapping (
+        group_id INTEGER PRIMARY KEY,
+        group_name TEXT NOT NULL
+    )
+    """)
+
+    # Seed egg group mapping data
+    egg_group_mapping = [
+        (1, "无法孵蛋"),
+        (2, "巨灵组"),
+        (3, "两栖组"),
+        (4, "昆虫组"),
+        (5, "天空组"),
+        (6, "动物组"),
+        (7, "妖精组"),
+        (8, "植物组"),
+        (9, "拟人组"),
+        (10, "软体组"),
+        (11, "大地组"),
+        (12, "魔力组"),
+        (13, "海洋组"),
+        (14, "龙组"),
+        (15, "机械组"),
+    ]
+    cursor.executemany("INSERT OR REPLACE INTO egg_group_mapping (group_id, group_name) VALUES (?, ?)", egg_group_mapping)
+
     conn.commit()
     return conn
 
@@ -240,27 +268,16 @@ def run_sync(progress_callback=None):
         conn.commit()
         report(f"宠物刷新时间: {refresh_time_str}", 0, 0)
 
-    # 同步蛋组数据 (从 docs/egg.json)
+    # 同步基础配置数据 (从 roco_kingdom_world_conf/PETBASE_CONF.json)
     try:
-        egg_path = os.path.join(DOCS_DIR, 'egg.json')
-        with open(egg_path, 'r', encoding='utf-8') as f:
-            egg_data = json.load(f)
-            for item in egg_data:
-                cursor.execute("UPDATE pet_base_info SET egg_groups = ? WHERE itemId = ?",
-                               (json.dumps(item.get("eggGroups", []), ensure_ascii=False), item["id"]))
-        conn.commit()
-        report("蛋组数据已同步", 0, 0)
-    except Exception as e:
-        report(f"⚠ 蛋组同步失败: {e}", 0, 0)
-
-    # 同步基础配置数据 (从 docs/PETBASE_CONF.json)
-    try:
-        conf_path = os.path.join(DOCS_DIR, 'PETBASE_CONF.json')
+        conf_path = os.path.join(CONF_DIR, 'PETBASE_CONF.json')
         with open(conf_path, 'r', encoding='utf-8') as f:
             base_conf = json.load(f)
-            rows = base_conf.get("RocoDataRows", {})
-            for pid, data in rows.items():
+            for data in base_conf:
                 egg_group = data.get("egg_group", [])
+                pid = data.get("id")
+                if pid is None:
+                    continue
                 cursor.execute("""
                 UPDATE pet_base_info SET
                     egg_group_int = ?,
@@ -277,6 +294,22 @@ def run_sync(progress_callback=None):
                     data.get("weight_low"),
                     int(pid)
                 ))
+        conn.commit()
+
+        # Generate egg_groups from egg_group_int using mapping table
+        cursor.execute("SELECT group_id, group_name FROM egg_group_mapping")
+        mapping = {row[0]: row[1] for row in cursor.fetchall()}
+
+        cursor.execute("SELECT id, egg_group_int FROM pet_base_info WHERE egg_group_int IS NOT NULL")
+        for row in cursor.fetchall():
+            pet_id = row[0]
+            try:
+                group_int_list = json.loads(row[1]) if row[1] else []
+                group_names = [mapping.get(gid, f"未知组{gid}") for gid in group_int_list]
+                cursor.execute("UPDATE pet_base_info SET egg_groups = ? WHERE id = ?",
+                               (json.dumps(group_names, ensure_ascii=False), pet_id))
+            except (json.JSONDecodeError, TypeError):
+                pass
         conn.commit()
         report("基础配置已同步", 0, 0)
     except Exception as e:
