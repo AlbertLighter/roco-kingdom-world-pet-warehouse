@@ -1,4 +1,11 @@
 // Shared rendering logic from app.js
+function escapeHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
 function renderHexagon(pet) {
     const stats = [
         { key: 'hp', label: 'HP', talent: 'hp_talent', match: ['HP', '生命'] },
@@ -121,20 +128,31 @@ function createPetCard(pet) {
 
     const medalDisplay = pet.medal && pet.medal.length > 10 ? pet.medal.substring(0, 10) + '...' : (pet.medal || '-');
 
+    const escapedName = escapeHtml(pet.name);
+    const escapedMedal = escapeHtml(pet.medal);
+    const escapedNatureName = escapeHtml(pet.nature_name || '未知');
+    const escapedNaturePlus = escapeHtml(pet.nature_plus || '-');
+    const escapedNatureMinus = escapeHtml(pet.nature_minus || '-');
+    const eggGroupStr = pet.base_egg_group_int
+        ? escapeHtml(JSON.parse(pet.base_egg_group_int).join(', '))
+        : '-';
+    const escapedMedalTitle = escapeHtml(pet.medal || '');
+    const escapedEggTitle = escapeHtml(pet.base_egg_group_int || '-');
+
     return `
         <div class="pet-card ${genderClass}">
             <div class="pet-header">
-                <span class="pet-name">${pet.name} <span class="${genderIconClass}">${genderLabel}</span></span>
+                <span class="pet-name">${escapedName} <span class="${genderIconClass}">${genderLabel}</span></span>
                 <span class="pet-sn" style="color: #95a5a6; font-size: 0.8em;">#${pet.serial_num}</span>
                 <span class="pet-level">Lv.${pet.level}</span>
             </div>
             <div class="pet-content">
                 ${renderHexagon(pet)}
             </div>
-            <div class="nature-info" style="font-size:0.9em; margin: 5px 0; text-align: center;">性格: ${pet.nature_name || '未知'} (+${pet.nature_plus || '-'} -${pet.nature_minus || '-'})</div>
+            <div class="nature-info" style="font-size:0.9em; margin: 5px 0; text-align: center;">性格: ${escapedNatureName} (+${escapedNaturePlus} -${escapedNatureMinus})</div>
             <div class="extra-info" style="font-size:0.8em; color: #7f8c8d; margin-bottom: 5px; display: grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 0 10px;">
-                <div title="${pet.medal || ''}">勋章: ${medalDisplay}</div>
-                <div title="${pet.base_egg_group_int || '-'}">蛋组: ${pet.base_egg_group_int ? JSON.parse(pet.base_egg_group_int).join(', ') : '-'}</div>
+                <div title="${escapedMedalTitle}">勋章: ${escapedMedal}</div>
+                <div title="${escapedEggTitle}">蛋组: ${eggGroupStr}</div>
                 ${renderRuler('身高', pet.height, pet.base_height_low, pet.base_height_high, 100, 'm')}
                 ${renderRuler('体重', pet.weight, pet.base_weight_low, pet.base_weight_high, 1000, 'kg')}
             </div>
@@ -167,7 +185,8 @@ async function setGender(sn, gender) {
                 const genderLabel = ['', '♂', '♀'][gender];
                 const genderIconClass = ['', 'gender-male', 'gender-female'][gender];
                 const nameEl = card.querySelector('.pet-name');
-                nameEl.innerHTML = `${nameEl.textContent.split(' ')[0]} <span class="${genderIconClass}">${genderLabel}</span>`;
+                const baseName = nameEl.textContent.split(' ').slice(0, -1).join(' ');
+                nameEl.innerHTML = `${escapeHtml(baseName)} <span class="${genderIconClass}">${genderLabel}</span>`;
             }
         });
     } catch (error) {
@@ -239,7 +258,13 @@ function saveToHistory() {
     const config = getCurrentConfig();
     if (!config.targetPetId) return;
 
-    let history = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+    let history;
+    try {
+        history = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+        if (!Array.isArray(history)) history = [];
+    } catch (e) {
+        history = [];
+    }
     
     // Deduplicate: remove if exists
     history = history.filter(h => {
@@ -263,7 +288,13 @@ function saveToHistory() {
 
 function renderHistory() {
     const historyList = document.getElementById('historyList');
-    const history = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+    let history;
+    try {
+        history = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+        if (!Array.isArray(history)) history = [];
+    } catch (e) {
+        history = [];
+    }
     
     historyList.innerHTML = '';
     history.forEach((h, index) => {
@@ -323,7 +354,13 @@ function renderHistory() {
 }
 
 function deleteHistory(index) {
-    let history = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+    let history;
+    try {
+        history = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+        if (!Array.isArray(history)) history = [];
+    } catch (e) {
+        history = [];
+    }
     history.splice(index, 1);
     localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
     renderHistory();

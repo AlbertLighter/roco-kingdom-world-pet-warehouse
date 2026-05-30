@@ -1,6 +1,13 @@
 let currentPage = 1;
 const pageSize = 30;
 
+function escapeHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
 const petListEl = document.getElementById('petList');
 const searchInput = document.getElementById('searchInput');
 const searchBtn = document.getElementById('searchBtn');
@@ -24,7 +31,7 @@ async function fetchRefreshTime() {
 }
 
 async function fetchPets() {
-    const name = searchInput.value;
+    const name = searchInput.value.trim().slice(0, 100);
     const url = `/api/pets?page=${currentPage}&pageSize=${pageSize}&name=${encodeURIComponent(name)}`;
     
     try {
@@ -32,8 +39,15 @@ async function fetchPets() {
         const data = await response.json();
         renderPets(data.data);
         updatePagination(data.total);
+        document.getElementById('fetchError')?.remove();
     } catch (error) {
         console.error('Failed to fetch pets:', error);
+        const errorEl = document.createElement('div');
+        errorEl.id = 'fetchError';
+        errorEl.style.cssText = 'color: #e74c3c; text-align: center; padding: 20px;';
+        errorEl.textContent = '❌ 网络错误，无法获取宠物数据';
+        petListEl.innerHTML = '';
+        petListEl.appendChild(errorEl);
     }
 }
 
@@ -169,19 +183,30 @@ function renderPets(pets) {
 
         const medalDisplay = pet.medal && pet.medal.length > 10 ? pet.medal.substring(0, 10) + '...' : (pet.medal || '-');
 
+        const escapedName = escapeHtml(pet.name);
+        const escapedMedal = escapeHtml(pet.medal);
+        const escapedNatureName = escapeHtml(pet.nature_name || '未知');
+        const escapedNaturePlus = escapeHtml(pet.nature_plus || '-');
+        const escapedNatureMinus = escapeHtml(pet.nature_minus || '-');
+        const eggGroupStr = pet.base_egg_group_int
+            ? escapeHtml(JSON.parse(pet.base_egg_group_int).join(', '))
+            : '-';
+        const escapedMedalTitle = escapeHtml(pet.medal || '');
+        const escapedEggTitle = escapeHtml(pet.base_egg_group_int || '-');
+
         card.innerHTML = `
             <div class="pet-header">
-                <span class="pet-name">${pet.name} <span class="${genderIconClass}">${genderLabel}</span></span>
+                <span class="pet-name">${escapedName} <span class="${genderIconClass}">${genderLabel}</span></span>
                 <span class="pet-sn" style="color: #95a5a6; font-size: 0.8em;">#${pet.serial_num}</span>
                 <span class="pet-level">Lv.${pet.level}</span>
             </div>
             <div class="pet-content">
                 ${renderHexagon(pet)}
             </div>
-            <div class="nature-info" style="font-size:0.9em; margin: 5px 0; text-align: center;">性格: ${pet.nature_name || '未知'} (+${pet.nature_plus || '-'} -${pet.nature_minus || '-'})</div>
+            <div class="nature-info" style="font-size:0.9em; margin: 5px 0; text-align: center;">性格: ${escapedNatureName} (+${escapedNaturePlus} -${escapedNatureMinus})</div>
             <div class="extra-info" style="font-size:0.8em; color: #7f8c8d; margin-bottom: 5px; display: grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 0 10px;">
-                <div title="${pet.medal || ''}">勋章: ${medalDisplay}</div>
-                <div title="${pet.base_egg_group_int || '-'}">蛋组: ${pet.base_egg_group_int ? JSON.parse(pet.base_egg_group_int).join(', ') : '-'}</div>
+                <div title="${escapedMedalTitle}">勋章: ${escapedMedal}</div>
+                <div title="${escapedEggTitle}">蛋组: ${eggGroupStr}</div>
                 ${renderRuler('身高', pet.height, pet.base_height_low, pet.base_height_high, 100, 'm')}
                 ${renderRuler('体重', pet.weight, pet.base_weight_low, pet.base_weight_high, 1000, 'kg')}
             </div>

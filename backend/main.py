@@ -28,7 +28,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DB_PATH = "warehouse.db"
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(_BASE_DIR, "..", "warehouse.db")
 
 class BreedCalculator:
     def __init__(self, father_attrs, mother_attrs, king_ball_attr=None):
@@ -129,6 +130,24 @@ class BreedCalculator:
                 total_prob += prob_k * sum_k
             return total_prob
 
+def _build_pet_filter(name, base_id, include_inactive):
+    """Build WHERE clause and params for pet queries. All user values go through ? placeholders."""
+    where_parts = []
+    params = []
+
+    if not include_inactive:
+        where_parts.append("i.is_active = 1")
+    if name:
+        where_parts.append("(i.name LIKE ? OR b.name LIKE ?)")
+        params.extend([f"%{name}%", f"%{name}%"])
+    if base_id is not None:
+        where_parts.append("i.base_id = ?")
+        params.append(base_id)
+
+    where_str = " AND ".join(where_parts) if where_parts else "1=1"
+    return where_str, params
+
+
 def get_db_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -144,23 +163,8 @@ def get_pets(
 ):
     conn = get_db_connection()
     cursor = conn.cursor()
-    
-    # 基础过滤条件
-    where_clauses = ["1=1"]
-    params = []
-    
-    if not include_inactive:
-        where_clauses.append("i.is_active = 1")
-    
-    if name:
-        where_clauses.append("(i.name LIKE ? OR b.name LIKE ?)")
-        params.extend([f"%{name}%", f"%{name}%"])
-    
-    if base_id:
-        where_clauses.append("i.base_id = ?")
-        params.append(base_id)
-    
-    where_str = " AND ".join(where_clauses)
+
+    where_str, params = _build_pet_filter(name, base_id, include_inactive)
     
     # 1. 获取总数
     count_query = f"""
@@ -237,6 +241,61 @@ def update_gender(serial_num: int = Body(...), gender: int = Body(...)):
     conn.close()
     return {"msg": "Gender updated"}
 
+_STAT_COLS = {
+    "hp": "hp_talent",
+    "adAttack": "adAttack_talent",
+    "apAttack": "apAttack_talent",
+    "adDefense": "adDefense_talent",
+    "apDefense": "apDefense_talent",
+    "speed": "speed_talent"
+}
+
+
+def _get_size_score(pet: dict) -> float:
+    """Calculate body size score (0~1) for big-size breeding preference."""
+    h = pet.get("height") or 0
+    hl = pet.get("base_height_low") or 0
+    hh = pet.get("base_height_high") or 1
+    w = pet.get("weight") or 0
+    wl = pet.get("base_weight_low") or 0
+    wh = pet.get("base_weight_high") or 1
+    hs = (h - hl) / (hh - hl) if hh > hl else 0
+    ws = (w - wl) / (wh - wl) if wh > wl else 0
+    return max(0, min(1, (hs + ws) / 2))
+
+
+def _get_excellent_stats(pet: dict) -> list:
+    """Return stat keys where the pet has a positive talent (top 3)."""
+    return [k for k, col in _STAT_COLS.items() if pet.get(col, 0) > 0][:3]
+
+
+def _calc_nature_prob(mother: dict, father: dict, desired_nature_id: int, natures_count: int) -> float:
+    """Calculate nature inheritance probability."""
+    p = 0
+    if father["nature"] == desired_nature_id:
+        p += 0.35
+    if mother["nature"] == desired_nature_id:
+        p += 0.35
+    p += 0.3 * (1.0 / natures_count)
+    return p
+
+
+def _build_pair(mother: dict, father: dict, total_prob: float, size_score: float) -> dict:
+    """Build recommendation dict for a mother-father pair."""
+    mother_full = dict(mother)
+    mother_full["name"] = mother["base_name"]
+    father_full = dict(father)
+    father_full["name"] = father["base_name"]
+    score = round(total_prob * 100 + size_score * 50, 2)
+    return {
+        "mother": mother_full,
+        "father": father_full,
+        "probability": total_prob,
+        "size_score": round(size_score * 100, 2),
+        "score": score
+    }
+
+
 @app.post("/api/recommend_parents")
 def recommend_parents(
     target_base_id: int = Body(...),
@@ -246,134 +305,80 @@ def recommend_parents(
     king_ball_attr: Optional[str] = Body(None),
     breed_big_size: bool = Body(False)
 ):
-    """
-    推荐父母逻辑:
-    1. 目标精灵 evolutionStage 必须为 1
-    2. 母方: gender=2, 进化链包含目标精灵的 evolutionId
-    3. 父方: gender=1, 与母方属于相同蛋组
-    4. 计算具体概率而非模糊评分
-    5. 支持大块头体型倾向
-    """
     conn = get_db_connection()
     cursor = conn.cursor()
-    
-    # 获取性格总数用于计算随机概率
+
     cursor.execute("SELECT COUNT(*) FROM pet_natures")
     natures_count = cursor.fetchone()[0] or 30
-    
-    # 1. 获取目标精灵信息
+
+    # 1. 校验目标精灵
     cursor.execute("SELECT * FROM pet_base_info WHERE objId = ?", (target_base_id,))
     target = cursor.fetchone()
     if not target or target["evolutionStage"] != 1:
         raise HTTPException(status_code=400, detail="Target must be base form (stage 1)")
-    
+
     target_evo_ids = set(json.loads(target["evolutionId"]) if target["evolutionId"] else [])
-    
-    # 2. 找到所有合格的母方
+
+    # 2. 查询所有合格母方（进化链包含目标精灵）
     cursor.execute("""
-        SELECT i.*, b.familyId, b.egg_groups, b.evolutionId, b.name as base_name, 
+        SELECT i.*, b.familyId, b.egg_groups, b.evolutionId, b.name as base_name,
                b.height_low as base_height_low, b.height_high as base_height_high,
                b.weight_low as base_weight_low, b.weight_high as base_weight_high,
                n.name as nature_name, n.plus_stat as nature_plus, n.minus_stat as nature_minus
-        FROM pet_instances i 
-        JOIN pet_base_info b ON i.base_id = b.objId 
+        FROM pet_instances i
+        JOIN pet_base_info b ON i.base_id = b.objId
         LEFT JOIN pet_natures n ON i.nature = n.id
         WHERE i.is_active = 1 AND i.gender != 1
     """)
-    all_females = cursor.fetchall()
     qualified_mothers = []
-    for f in all_females:
-        f_dict = dict(f)
-        m_evo_ids = set(json.loads(f_dict["evolutionId"]) if f_dict["evolutionId"] else [])
-        if m_evo_ids.issubset(target_evo_ids):
-            qualified_mothers.append(f_dict)
+    for row in cursor.fetchall():
+        d = dict(row)
+        evo_ids = set(json.loads(d["evolutionId"]) if d["evolutionId"] else [])
+        if evo_ids.issubset(target_evo_ids):
+            qualified_mothers.append(d)
 
-    # 3. 找到所有合格的父方
+    # 3. 查询所有合格父方
     cursor.execute("""
-        SELECT i.*, b.familyId, b.egg_groups, b.name as base_name, 
+        SELECT i.*, b.familyId, b.egg_groups, b.name as base_name,
                b.height_low as base_height_low, b.height_high as base_height_high,
                b.weight_low as base_weight_low, b.weight_high as base_weight_high,
                n.name as nature_name, n.plus_stat as nature_plus, n.minus_stat as nature_minus
-        FROM pet_instances i 
-        JOIN pet_base_info b ON i.base_id = b.objId 
+        FROM pet_instances i
+        JOIN pet_base_info b ON i.base_id = b.objId
         LEFT JOIN pet_natures n ON i.nature = n.id
         WHERE i.is_active = 1 AND i.gender != 2
     """)
     all_males = [dict(row) for row in cursor.fetchall()]
 
+    # 4. 配对打分
     recommendations = []
-    stat_cols = {
-        "hp": "hp_talent",
-        "adAttack": "adAttack_talent",
-        "apAttack": "apAttack_talent",
-        "adDefense": "adDefense_talent",
-        "apDefense": "apDefense_talent",
-        "speed": "speed_talent"
-    }
-    
-    def get_size_score(p):
-        h = p.get("height") or 0
-        hl = p.get("base_height_low") or 0
-        hh = p.get("base_height_high") or 1
-        w = p.get("weight") or 0
-        wl = p.get("base_weight_low") or 0
-        wh = p.get("base_weight_high") or 1
-        
-        hs = (h - hl) / (hh - hl) if hh > hl else 0
-        ws = (w - wl) / (wh - wl) if wh > wl else 0
-        return max(0, min(1, (hs + ws) / 2))
-
     for mother in qualified_mothers:
         m_eggs = set(json.loads(mother["egg_groups"]) if mother["egg_groups"] else [])
-        m_excellent = [k for k, col in stat_cols.items() if mother.get(col, 0) > 0][:3]
-        
+        m_excellent = _get_excellent_stats(mother)
+
         for father in all_males:
             f_eggs = set(json.loads(father["egg_groups"]) if father["egg_groups"] else [])
             if not m_eggs.intersection(f_eggs):
                 continue
-            
-            f_excellent = [k for k, col in stat_cols.items() if father.get(col, 0) > 0][:3]
-            
-            # 属性继承概率
+
+            f_excellent = _get_excellent_stats(father)
+
             calc = BreedCalculator(f_excellent, m_excellent, king_ball_attr if use_king_ball else None)
             attr_prob = calc.get_target_prob(desired_stats)
-            
-            # 性格继承概率
+
             nature_prob = 1.0
             if desired_nature_id:
-                p = 0
-                if father["nature"] == desired_nature_id: p += 0.35
-                if mother["nature"] == desired_nature_id: p += 0.35
-                p += 0.3 * (1.0 / natures_count)
-                nature_prob = p
-            
+                nature_prob = _calc_nature_prob(mother, father, desired_nature_id, natures_count)
+
             total_prob = attr_prob * nature_prob
-            
-            score = round(total_prob * 100, 2)
-            
+
             size_score = 0
             if breed_big_size:
-                size_score = (get_size_score(mother) + get_size_score(father)) / 2
-                score = round(total_prob * 100 + size_score * 50, 2) # 体型分最高加50分，影响排序
+                size_score = (_get_size_score(mother) + _get_size_score(father)) / 2
 
-            # 获取完整的母方和父方数据，用于前端渲染卡片
-            mother_full = dict(mother)
-            mother_full["name"] = mother["base_name"] # 确保 name 字段存在
-            
-            father_full = dict(father)
-            father_full["name"] = father["base_name"]
+            recommendations.append(_build_pair(mother, father, total_prob, size_score))
 
-            recommendations.append({
-                "mother": mother_full,
-                "father": father_full,
-                "probability": total_prob,
-                "size_score": round(size_score * 100, 2) if breed_big_size else 0,
-                "score": score
-            })
-
-    # 按概率(或综合评分)排序
     recommendations.sort(key=lambda x: x["score"], reverse=True)
-    
     conn.close()
     return recommendations[:10]
 

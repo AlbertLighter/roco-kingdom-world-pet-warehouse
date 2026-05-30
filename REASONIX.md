@@ -31,8 +31,9 @@ Reasonix 会话自动加载的知识库。上限 80 行。
 | 安装依赖 | `uv sync`（或 `pip install -r requirements.txt`） |
 | 初始化子模块（首次 clone） | `git submodule update --init` |
 | 更新子模块 | `./scripts/sync_conf.sh` |
-
-未配置测试框架、linter 或格式化工具（未发现 ruff/flake8/pytest 等配置）。
+| 安装 dev 依赖（lint/typecheck） | `uv sync --group dev` |
+| Lint 检查 | `ruff check .` |
+| 类型检查 | `mypy backend/` |
 
 ## 约定
 

@@ -5,8 +5,11 @@ from urllib3.exceptions import InsecureRequestWarning
 from urllib.parse import quote
 from dotenv import load_dotenv
 
-# Suppress insecure request warnings when using a proxy
-requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
+REQUESTS_VERIFY = os.getenv("REQUESTS_VERIFY", "true").lower() == "true"
+TIMEOUT = (10, 30)  # (connect, read) seconds
+
+if not REQUESTS_VERIFY:
+    requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
 load_dotenv()
 
@@ -49,7 +52,7 @@ def direct_login():
     
     try:
         print("Attempting to refresh login session...")
-        response = requests.post(DIRECT_LOGIN_URL, json=payload, headers=headers, proxies=PROXIES, verify=False)
+        response = requests.post(DIRECT_LOGIN_URL, json=payload, headers=headers, proxies=PROXIES, verify=REQUESTS_VERIFY, timeout=TIMEOUT)
         response.raise_for_status()
         res_json = response.json()
         if res_json.get("code") == 0:
@@ -88,7 +91,7 @@ def gateway_request(req_path, req_param, req_type="POST", retry=True):
     }
     
     try:
-        response = requests.post(GATEWAY_URL, data=body, headers=headers, proxies=PROXIES, verify=False)
+        response = requests.post(GATEWAY_URL, data=body, headers=headers, proxies=PROXIES, verify=REQUESTS_VERIFY, timeout=TIMEOUT)
         res_json = response.json()
         
         # Handle expired session
@@ -122,7 +125,7 @@ def fetch_refresh_time():
 def fetch_base_info(baseid):
     url = BASE_INFO_URL_TEMPLATE.format(baseid=baseid)
     try:
-        response = requests.get(url, proxies=PROXIES, verify=False)
+        response = requests.get(url, proxies=PROXIES, verify=REQUESTS_VERIFY, timeout=TIMEOUT)
         response.raise_for_status()
         return response.json()
     except Exception as e:
