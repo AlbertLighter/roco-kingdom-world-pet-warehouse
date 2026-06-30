@@ -23,6 +23,7 @@ warehouse.db-journal
 # Environment variables (Sensitive data)
 .env
 .env.*
+!.env.example
 
 # MacOS
 .DS_Store

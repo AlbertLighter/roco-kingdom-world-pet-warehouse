@@ -9,14 +9,12 @@ try:
         gateway_request,
         fetch_user_info,
         fetch_refresh_time,
-        fetch_base_info
     )
 except ImportError:
     from scripts.api_client import (
         gateway_request,
         fetch_user_info,
         fetch_refresh_time,
-        fetch_base_info
     )
 
 # Resolve paths relative to project root
@@ -268,53 +266,6 @@ def run_sync(progress_callback=None):
         conn.commit()
         report(f"宠物刷新时间: {refresh_time_str}", 0, 0)
 
-    # 同步基础配置数据 (从 roco_kingdom_world_conf/PETBASE_CONF.json)
-    try:
-        conf_path = os.path.join(CONF_DIR, 'PETBASE_CONF.json')
-        with open(conf_path, 'r', encoding='utf-8') as f:
-            base_conf = json.load(f)
-            for data in base_conf:
-                egg_group = data.get("egg_group", [])
-                pid = data.get("id")
-                if pid is None:
-                    continue
-                cursor.execute("""
-                UPDATE pet_base_info SET
-                    egg_group_int = ?,
-                    height_high = ?,
-                    height_low = ?,
-                    weight_high = ?,
-                    weight_low = ?
-                WHERE objId = ?
-                """, (
-                    json.dumps(egg_group, ensure_ascii=False),
-                    data.get("height_high"),
-                    data.get("height_low"),
-                    data.get("weight_high"),
-                    data.get("weight_low"),
-                    int(pid)
-                ))
-        conn.commit()
-
-        # Generate egg_groups from egg_group_int using mapping table
-        cursor.execute("SELECT group_id, group_name FROM egg_group_mapping")
-        mapping = {row[0]: row[1] for row in cursor.fetchall()}
-
-        cursor.execute("SELECT id, egg_group_int FROM pet_base_info WHERE egg_group_int IS NOT NULL")
-        for row in cursor.fetchall():
-            pet_id = row[0]
-            try:
-                group_int_list = json.loads(row[1]) if row[1] else []
-                group_names = [mapping.get(gid, f"未知组{gid}") for gid in group_int_list]
-                cursor.execute("UPDATE pet_base_info SET egg_groups = ? WHERE id = ?",
-                               (json.dumps(group_names, ensure_ascii=False), pet_id))
-            except (json.JSONDecodeError, TypeError):
-                pass
-        conn.commit()
-        report("基础配置已同步", 0, 0)
-    except Exception as e:
-        report(f"⚠ 基础配置同步失败: {e}", 0, 0)
-
     # Fetch pet list (paginated)
     current_page = 1
     page_size = 100
@@ -353,7 +304,7 @@ def run_sync(progress_callback=None):
     total_pets = len(all_api_serials)
     report(f"共发现 {total_pets} 只精灵", 0, total_pets)
 
-    # 1. 补全缺失的 PetBaseId 基础信息
+    # 1. 补全缺失的 PetBaseId 基础信息（从 PETBASE_CONF.json 解析，无需网络请求）
     unique_base_ids = {pet["PetBaseId"] for pet in all_api_pets}
     missing_ids = []
     for baseid in unique_base_ids:
@@ -361,36 +312,64 @@ def run_sync(progress_callback=None):
         if not cursor.fetchone():
             missing_ids.append(baseid)
 
-    for i, baseid in enumerate(missing_ids):
-        report(f"补全基础信息 {baseid} ({i+1}/{len(missing_ids)})", i+1, len(missing_ids))
-        base_info = fetch_base_info(baseid)
-        if base_info:
-            fid_raw = base_info.get("familyId", "")
-            family_ids = [int(x) for x in str(fid_raw).split(';') if str(x).strip()] if fid_raw else []
-            eid_raw = base_info.get("evolutionId", "")
-            evolution_ids = [int(x) for x in str(eid_raw).split(';') if str(x).strip()] if eid_raw else []
+    if missing_ids:
+        # 加载 PETBASE_CONF.json 到内存字典
+        conf_path = os.path.join(CONF_DIR, 'PETBASE_CONF.json')
+        with open(conf_path, 'r', encoding='utf-8') as f:
+            base_conf_list = json.load(f)
+        base_conf_map = {item["id"]: item for item in base_conf_list}
 
-            cursor.execute("""
-            INSERT OR REPLACE INTO pet_base_info (id, name, description, hp, adAttack, apAttack, adDefense, apDefense, speed, familyId, itemId, objId, evolutionStage, evolutionId)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                base_info["id"],
-                base_info["name"],
-                base_info.get("desc", ""),
-                base_info["hp"],
-                base_info["adAttack"],
-                base_info["apAttack"],
-                base_info["adDefense"],
-                base_info["apDefense"],
-                base_info["speed"],
-                json.dumps(family_ids, ensure_ascii=False),
-                int(base_info.get("itemId", 0)),
-                int(base_info.get("objId", 0)),
-                base_info.get("evolutionStage", 0),
-                json.dumps(evolution_ids, ensure_ascii=False)
-            ))
-            conn.commit()
-            time.sleep(0.5)
+        for i, baseid in enumerate(missing_ids):
+            item = base_conf_map.get(baseid)
+            if item:
+                cursor.execute("""
+                INSERT OR REPLACE INTO pet_base_info (id, name, description, hp, adAttack, apAttack, adDefense, apDefense, speed, familyId, itemId, objId, evolutionStage, evolutionId, egg_group_int, height_high, height_low, weight_high, weight_low)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    item["id"],
+                    item["name"],
+                    item.get("description", ""),
+                    item.get("hp_max_race", 0),
+                    item.get("phy_attack_race", 0),
+                    item.get("spe_attack_race", 0),
+                    item.get("phy_defence_race", 0),
+                    item.get("spe_defence_race", 0),
+                    item.get("speed_race", 0),
+                    json.dumps([], ensure_ascii=False),  # familyId: PETBASE_CONF 无此字段
+                    0,  # itemId: PETBASE_CONF 无此字段
+                    item["id"],  # objId: 与 id 相同
+                    item.get("stage", 0),  # evolutionStage
+                    json.dumps(item.get("pet_evolution_id", []), ensure_ascii=False),  # evolutionId
+                    json.dumps(item.get("egg_group", []), ensure_ascii=False),  # egg_group_int
+                    item.get("height_high"),
+                    item.get("height_low"),
+                    item.get("weight_high"),
+                    item.get("weight_low"),
+                ))
+                conn.commit()
+                report(f"补全基础信息 {baseid} ({i+1}/{len(missing_ids)})", i+1, len(missing_ids))
+            else:
+                report(f"⚠ PETBASE_CONF.json 中未找到 base_id={baseid}，跳过", i+1, len(missing_ids))
+
+    # 生成蛋组名称（从 egg_group_int 映射到中文名）
+    try:
+        cursor.execute("SELECT group_id, group_name FROM egg_group_mapping")
+        mapping = {row[0]: row[1] for row in cursor.fetchall()}
+
+        cursor.execute("SELECT id, egg_group_int FROM pet_base_info WHERE egg_group_int IS NOT NULL")
+        for row in cursor.fetchall():
+            pet_id = row[0]
+            try:
+                group_int_list = json.loads(row[1]) if row[1] else []
+                group_names = [mapping.get(gid, f"未知组{gid}") for gid in group_int_list]
+                cursor.execute("UPDATE pet_base_info SET egg_groups = ? WHERE id = ?",
+                               (json.dumps(group_names, ensure_ascii=False), pet_id))
+            except (json.JSONDecodeError, TypeError):
+                pass
+        conn.commit()
+        report("基础配置已同步", 0, 0)
+    except Exception as e:
+        report(f"⚠ 基础配置同步失败: {e}", 0, 0)
 
     # 2. Detect and mark released pets
     cursor.execute("SELECT serial_num FROM pet_instances WHERE is_active = 1")
