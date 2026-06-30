@@ -6,6 +6,7 @@ import threading
 import sys
 import os
 import time
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Query, HTTPException, Body
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -15,7 +16,141 @@ from typing import Optional, List
 # Add project root to path so we can import scripts
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-app = FastAPI()
+
+
+
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(_BASE_DIR, "..", "warehouse.db")
+
+
+def init_db():
+    """启动时自动创建数据库表（如不存在）"""
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    # pet_base_info: 宠物基础信息
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS pet_base_info (
+        id INTEGER PRIMARY KEY,
+        name TEXT,
+        description TEXT,
+        hp INTEGER,
+        adAttack INTEGER,
+        apAttack INTEGER,
+        adDefense INTEGER,
+        apDefense INTEGER,
+        speed INTEGER,
+        familyId TEXT,
+        itemId INTEGER,
+        objId INTEGER,
+        evolutionStage INTEGER,
+        evolutionId TEXT,
+        egg_groups TEXT,
+        egg_group_int TEXT,
+        height_high INTEGER,
+        height_low INTEGER,
+        weight_high INTEGER,
+        weight_low INTEGER
+    )
+    """)
+
+    # pet_instances: 玩家拥有的宠物实例
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS pet_instances (
+        serial_num INTEGER PRIMARY KEY,
+        base_id INTEGER,
+        name TEXT,
+        level INTEGER,
+        nature INTEGER,
+        talent_rank INTEGER,
+        hp INTEGER,
+        adAttack INTEGER,
+        apAttack INTEGER,
+        adDefense INTEGER,
+        apDefense INTEGER,
+        speed INTEGER,
+        hp_race INTEGER,
+        adAttack_race INTEGER,
+        apAttack_race INTEGER,
+        adDefense_race INTEGER,
+        apDefense_race INTEGER,
+        speed_race INTEGER,
+        hp_talent INTEGER,
+        adAttack_talent INTEGER,
+        apAttack_talent INTEGER,
+        adDefense_talent INTEGER,
+        apDefense_talent INTEGER,
+        speed_talent INTEGER,
+        is_active INTEGER DEFAULT 1,
+        gender INTEGER DEFAULT 0,
+        medal TEXT,
+        catch_ball INTEGER,
+        height INTEGER,
+        weight INTEGER,
+        FOREIGN KEY (base_id) REFERENCES pet_base_info (id)
+    )
+    """)
+
+    # pet_natures: 性格数据
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS pet_natures (
+        id INTEGER PRIMARY KEY,
+        name TEXT,
+        plus_stat TEXT,
+        minus_stat TEXT
+    )
+    """)
+    natures = [
+        (1, "大胆", "物防", "物攻"), (2, "固执", "物攻", "魔攻"), (3, "调皮", "物攻", "魔抗"),
+        (4, "勇敢", "物攻", "速度"), (5, "逞强", "物攻", "生命"), (6, "稳重", "魔攻", "物防"),
+        (7, "天真", "速度", "魔抗"), (8, "懒散", "物防", "魔防"), (9, "悠闲", "物防", "速度"),
+        (10, "坦率", "物防", "生命"), (11, "聪明", "魔攻", "物攻"), (12, "专注", "魔攻", "物防"),
+        (13, "偏执", "魔攻", "魔防"), (14, "冷静", "魔攻", "速度"), (15, "理性", "魔攻", "生命"),
+        (16, "警惕", "魔防", "物攻"), (17, "温顺", "魔抗", "物防"), (18, "害羞", "魔防", "魔攻"),
+        (19, "慎重", "魔抗", "速度"), (20, "焦虑", "魔防", "生命"), (21, "胆小", "速度", "物攻"),
+        (22, "急躁", "速度", "物防"), (23, "开朗", "速度", "魔攻"), (24, "莽撞", "速度", "魔防"),
+        (25, "热情", "速度", "生命"), (26, "沉默", "生命", "物攻"), (27, "忧郁", "生命", "物防"),
+        (28, "平和", "生命", "魔攻"), (29, "粗心", "生命", "魔防"), (30, "踏实", "生命", "速度")
+    ]
+    cursor.executemany("INSERT OR REPLACE INTO pet_natures (id, name, plus_stat, minus_stat) VALUES (?, ?, ?, ?)", natures)
+
+    # settings: 键值存储
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT
+    )
+    """)
+
+    # egg_group_mapping: 蛋组映射
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS egg_group_mapping (
+        group_id INTEGER PRIMARY KEY,
+        group_name TEXT NOT NULL
+    )
+    """)
+    egg_group_mapping = [
+        (1, "无法孵蛋"), (2, "巨灵组"), (3, "两栖组"), (4, "昆虫组"),
+        (5, "天空组"), (6, "动物组"), (7, "妖精组"), (8, "植物组"),
+        (9, "拟人组"), (10, "软体组"), (11, "大地组"), (12, "魔力组"),
+        (13, "海洋组"), (14, "龙组"), (15, "机械组"),
+    ]
+    cursor.executemany("INSERT OR REPLACE INTO egg_group_mapping (group_id, group_name) VALUES (?, ?)", egg_group_mapping)
+
+    conn.commit()
+    conn.close()
+    print("数据库已初始化（表已就绪）")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期：启动时初始化数据库"""
+    init_db()
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 # Global lock to prevent concurrent sync runs
 _sync_lock = threading.Lock()
@@ -27,9 +162,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(_BASE_DIR, "..", "warehouse.db")
 
 class BreedCalculator:
     def __init__(self, father_attrs, mother_attrs, king_ball_attr=None):
