@@ -274,7 +274,7 @@ function createPetCard(pet) {
                 <span class="badge badge-talent-${pet.talent_rank}">${talentRankLabel}</span>
                 ${bloodlineName ? `<span class="badge badge-bloodline">🩸 ${escapeHtml(bloodlineName)}</span>` : ''}
                 ${typeNames.map(t => `<span class="badge badge-type">${escapeHtml(t)}</span>`).join('')}
-                ${pet.mutation ? `<span class="badge" style="background:#fce4ec;color:#c62828;">✨ 异色</span>` : ''}
+                ${pet.mutation ? `<span class="badge" style="background:#fce4ec;color:#c62828;display:inline-flex;align-items:center;gap:3px;"><img src="https://game.gtimg.cn/images/rocom/rocodata/MutationDiffType/${pet.mutation}.png" style="height:16px;width:auto;" onerror="this.style.display='none'"> 异色</span>` : ''}
             </div>
 
             <!-- 雷达图 -->
