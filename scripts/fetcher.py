@@ -2,6 +2,8 @@ import json
 import os
 import time
 import sqlite3
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Support both direct execution and import from backend
 try:
@@ -21,6 +23,9 @@ except ImportError:
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(PROJECT_ROOT, "warehouse.db")
 CONF_DIR = os.path.join(PROJECT_ROOT, "roco_kingdom_world_conf")
+
+# 多线程工作线程数
+SYNC_WORKERS = 5
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -428,9 +433,6 @@ def run_sync(progress_callback=None):
     conn.commit()
 
     # 4. Fetch details for new pets or pets missing new fields
-    new_count = 0
-    updated_count = 0
-
     # Pre-scan to find pets that need detail fetching
     needs_detail = []
     for pet in all_api_pets:
@@ -450,19 +452,27 @@ def run_sync(progress_callback=None):
     detail_total = len(needs_detail)
     report(f"需要获取详情的精灵: {detail_total} 只", 0, detail_total)
 
-    for i, (pet, action) in enumerate(needs_detail):
+    # ---- 多线程获取详情 ----
+    detail_lock = threading.Lock()
+    detail_progress = {"done": 0, "new": 0, "updated": 0}
+
+    def fetch_one(pet, action):
+        """工作线程: 独立 DB 连接 + API 请求 + 写入"""
         sn = pet["SerialNum"]
         trank = pet["PetTalentRank"]
+        try:
+            detail = gateway_request("/api/pet/detail", {"id": str(sn)})
+            if not detail:
+                with detail_lock:
+                    detail_progress["done"] += 1
+                return (sn, False, "API 返回空")
 
-        if action == "update":
-            report(f"更新精灵 #{sn} 详情 ({i+1}/{detail_total})", i+1, detail_total)
-        else:
-            report(f"获取新精灵 #{sn} 详情 ({i+1}/{detail_total})", i+1, detail_total)
+            # 每个线程使用独立连接
+            t_conn = sqlite3.connect(DB_PATH)
+            t_cursor = t_conn.cursor()
 
-        detail = gateway_request("/api/pet/detail", {"id": str(sn)})
-        if detail:
             if action == "update":
-                cursor.execute("""
+                t_cursor.execute("""
                 UPDATE pet_instances SET
                     medal = ?, catch_ball = ?, height = ?, weight = ?,
                     bloodline = ?, skill_dam_type = ?,
@@ -484,9 +494,11 @@ def run_sync(progress_callback=None):
                     detail.get("PetTalentSkill", 0),
                     sn
                 ))
-                updated_count += 1
+                t_conn.commit()
+                with detail_lock:
+                    detail_progress["updated"] += 1
             else:
-                cursor.execute("""
+                t_cursor.execute("""
                 INSERT INTO pet_instances (
                     serial_num, base_id, name, level, nature, talent_rank,
                     hp, adAttack, apAttack, adDefense, apDefense, speed,
@@ -535,11 +547,38 @@ def run_sync(progress_callback=None):
                     detail.get("PetMutation", 0),
                     detail.get("PetTalentSkill", 0)
                 ))
-                new_count += 1
-            conn.commit()
-            time.sleep(1)
+                t_conn.commit()
+                with detail_lock:
+                    detail_progress["new"] += 1
+
+            t_conn.close()
+
+            with detail_lock:
+                detail_progress["done"] += 1
+                done = detail_progress["done"]
+            report(f"完成 #{sn} ({action}) ({done}/{detail_total})", done, detail_total)
+
+            time.sleep(1)  # 每个线程自行限速
+            return (sn, True, None)
+        except Exception as e:
+            with detail_lock:
+                detail_progress["done"] += 1
+            report(f"⚠ #{sn} 失败: {e}", detail_progress["done"], detail_total)
+            return (sn, False, str(e))
+
+    # 提交所有任务到线程池
+    with ThreadPoolExecutor(max_workers=SYNC_WORKERS) as executor:
+        futures = [executor.submit(fetch_one, pet, action) for pet, action in needs_detail]
+        results = [f.result() for f in as_completed(futures)]
+
+    success_count = sum(1 for _, ok, _ in results if ok)
+    fail_count = len(results) - success_count
+    new_count = detail_progress["new"]
+    updated_count = detail_progress["updated"]
 
     summary = f"同步完成！新增 {new_count} 只，更新 {updated_count} 只"
+    if fail_count:
+        summary += f"，{fail_count} 只失败"
     report(summary, detail_total, detail_total)
     conn.close()
     return {"new": new_count, "updated": updated_count, "total": total_pets}
