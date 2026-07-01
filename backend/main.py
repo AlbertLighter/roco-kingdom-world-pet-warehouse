@@ -21,6 +21,45 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(_BASE_DIR, "..", "warehouse.db")
+CONF_DIR = os.path.join(_BASE_DIR, "..", "roco_kingdom_world_conf")
+
+# ---- 加载游戏配置映射（懒加载） ----
+_config_cache = {}
+
+def _load_json(filename):
+    path = os.path.join(CONF_DIR, filename)
+    if not os.path.exists(path):
+        return None
+    if filename not in _config_cache:
+        with open(path, "r", encoding="utf-8") as f:
+            _config_cache[filename] = json.load(f)
+    return _config_cache[filename]
+
+def get_bloodline_map():
+    data = _load_json("PET_BLOOD_CONF.json")
+    if not data:
+        return {}
+    return {item["id"]: {"name": item["name"], "blood_name": item["blood_name"], "blood_type": item.get("blood_type", 0)} for item in data}
+
+def get_type_map():
+    data = _load_json("TYPE_DICTIONARY.json")
+    if not data:
+        return {}
+    return {item["id"]: {"type_name": item["type_name"], "short_name": item["short_name"]} for item in data}
+
+def get_medal_map():
+    data = _load_json("MEDAL_CONF.json")
+    if not data:
+        return {}
+    return {item["id"]: {"name": item["name"], "quality": item.get("quality", 1), "desc": item.get("desc", "")} for item in data}
+
+def get_nature_map():
+    """性格映射，包含 buff/debuff 对应的属性下标 (0-5 对应 hp/adAttack/adDefense/apAttack/apDefense/speed)"""
+    data = _load_json("PET_BLOOD_CONF.json")
+    if not data:
+        return {}
+    # PETBASE_CONF 的 nature_ids 字段，但这里直接从数据库获取
+    return {}
 
 
 def init_db():
@@ -88,6 +127,14 @@ def init_db():
         catch_ball INTEGER,
         height INTEGER,
         weight INTEGER,
+        bloodline INTEGER DEFAULT 0,
+        skill_dam_type TEXT,
+        equip_skill_1 INTEGER DEFAULT 0,
+        equip_skill_2 INTEGER DEFAULT 0,
+        equip_skill_3 INTEGER DEFAULT 0,
+        equip_skill_4 INTEGER DEFAULT 0,
+        mutation INTEGER DEFAULT 0,
+        talent_skill INTEGER DEFAULT 0,
         FOREIGN KEY (base_id) REFERENCES pet_base_info (id)
     )
     """)
@@ -116,6 +163,24 @@ def init_db():
     cursor.executemany("INSERT OR REPLACE INTO pet_natures (id, name, plus_stat, minus_stat) VALUES (?, ?, ?, ?)", natures)
 
     # settings: 键值存储
+    # ---- 向后兼容迁移：旧数据库缺少的列 ----
+    _migrate_cols = [
+        ("pet_instances", "bloodline", "INTEGER DEFAULT 0"),
+        ("pet_instances", "skill_dam_type", "TEXT"),
+        ("pet_instances", "equip_skill_1", "INTEGER DEFAULT 0"),
+        ("pet_instances", "equip_skill_2", "INTEGER DEFAULT 0"),
+        ("pet_instances", "equip_skill_3", "INTEGER DEFAULT 0"),
+        ("pet_instances", "equip_skill_4", "INTEGER DEFAULT 0"),
+        ("pet_instances", "mutation", "INTEGER DEFAULT 0"),
+        ("pet_instances", "talent_skill", "INTEGER DEFAULT 0"),
+    ]
+    for table, col, typedef in _migrate_cols:
+        try:
+            cursor.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typedef}")
+            print(f"迁移: {table}.{col} 已添加")
+        except sqlite3.OperationalError:
+            pass
+
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
@@ -284,6 +349,21 @@ def get_db_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
+@app.get("/api/config/bloodlines")
+def get_bloodlines():
+    """获取血脉配置映射"""
+    return get_bloodline_map()
+
+@app.get("/api/config/types")
+def get_types():
+    """获取系别配置映射"""
+    return get_type_map()
+
+@app.get("/api/config/medals")
+def get_medals():
+    """获取奖牌配置映射"""
+    return get_medal_map()
 
 @app.get("/api/pets")
 def get_pets(

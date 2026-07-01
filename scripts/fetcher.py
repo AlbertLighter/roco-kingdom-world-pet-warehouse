@@ -116,6 +116,46 @@ def init_db():
         cursor.execute("ALTER TABLE pet_instances ADD COLUMN weight INTEGER")
     except sqlite3.OperationalError:
         pass
+
+    try:
+        cursor.execute("ALTER TABLE pet_instances ADD COLUMN bloodline INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE pet_instances ADD COLUMN skill_dam_type TEXT")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE pet_instances ADD COLUMN equip_skill_1 INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE pet_instances ADD COLUMN equip_skill_2 INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE pet_instances ADD COLUMN equip_skill_3 INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE pet_instances ADD COLUMN equip_skill_4 INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE pet_instances ADD COLUMN mutation INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE pet_instances ADD COLUMN talent_skill INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
         
     try:
         cursor.execute("ALTER TABLE pet_base_info ADD COLUMN itemId INTEGER")
@@ -424,13 +464,24 @@ def run_sync(progress_callback=None):
             if action == "update":
                 cursor.execute("""
                 UPDATE pet_instances SET
-                    medal = ?, catch_ball = ?, height = ?, weight = ?
+                    medal = ?, catch_ball = ?, height = ?, weight = ?,
+                    bloodline = ?, skill_dam_type = ?,
+                    equip_skill_1 = ?, equip_skill_2 = ?, equip_skill_3 = ?, equip_skill_4 = ?,
+                    mutation = ?, talent_skill = ?
                 WHERE serial_num = ?
                 """, (
                     detail.get("PetMedal", ""),
                     detail.get("PetCatchBall", 0),
                     detail.get("PetHeight", 0),
                     detail.get("PetWeight", 0),
+                    detail.get("PetBloodline", 0),
+                    json.dumps(detail.get("PetSkillDamType", []), ensure_ascii=False),
+                    detail.get("EquipSkill1", 0),
+                    detail.get("EquipSkill2", 0),
+                    detail.get("EquipSkill3", 0),
+                    detail.get("EquipSkill4", 0),
+                    detail.get("PetMutation", 0),
+                    detail.get("PetTalentSkill", 0),
                     sn
                 ))
                 updated_count += 1
@@ -441,8 +492,11 @@ def run_sync(progress_callback=None):
                     hp, adAttack, apAttack, adDefense, apDefense, speed,
                     hp_race, adAttack_race, apAttack_race, adDefense_race, apDefense_race, speed_race,
                     hp_talent, adAttack_talent, apAttack_talent, adDefense_talent, apDefense_talent, speed_talent,
-                    is_active, gender, medal, catch_ball, height, weight
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?)
+                    is_active, gender, medal, catch_ball, height, weight,
+                    bloodline, skill_dam_type,
+                    equip_skill_1, equip_skill_2, equip_skill_3, equip_skill_4,
+                    mutation, talent_skill
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     int(detail["SerialNum"]),
                     detail["PetBaseId"],
@@ -471,7 +525,15 @@ def run_sync(progress_callback=None):
                     detail.get("PetMedal", ""),
                     detail.get("PetCatchBall", 0),
                     detail.get("PetHeight", 0),
-                    detail.get("PetWeight", 0)
+                    detail.get("PetWeight", 0),
+                    detail.get("PetBloodline", 0),
+                    json.dumps(detail.get("PetSkillDamType", []), ensure_ascii=False),
+                    detail.get("EquipSkill1", 0),
+                    detail.get("EquipSkill2", 0),
+                    detail.get("EquipSkill3", 0),
+                    detail.get("EquipSkill4", 0),
+                    detail.get("PetMutation", 0),
+                    detail.get("PetTalentSkill", 0)
                 ))
                 new_count += 1
             conn.commit()
