@@ -48,10 +48,14 @@ def get_type_map():
     return {item["id"]: {"type_name": item["type_name"], "short_name": item["short_name"]} for item in data}
 
 def get_medal_map():
-    data = _load_json("MEDAL_CONF.json")
+    """奖牌名称映射，从 REPORT_COIN_RATIO_CONF 获取（enum=2 的条目为奖牌）"""
+    data = _load_json("REPORT_COIN_RATIO_CONF.json")
     if not data:
         return {}
-    return {item["id"]: {"name": item["name"], "quality": item.get("quality", 1), "desc": item.get("desc", "")} for item in data}
+    return {
+        item["enum_param"]: {"name": item["param_name"], "source_id": item["id"]}
+        for item in data if item.get("enum_ReportCoinRatio") == 2 and item.get("enum_param")
+    }
 
 def get_nature_map():
     """性格映射，包含 buff/debuff 对应的属性下标 (0-5 对应 hp/adAttack/adDefense/apAttack/apDefense/speed)"""
