@@ -319,6 +319,16 @@ async function init() {
     document.getElementById('clearHistoryBtn').addEventListener('click', () => { if (confirm('确定要清空所有历史配置吗？')) { localStorage.removeItem(HISTORY_KEY); renderHistory(); } });
 }
 
+function setGender(sn, gender) {
+    fetch('/api/update_gender', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({serial_num: sn, gender: gender})
+    }).then(r => {
+        if (r.ok) location.reload();
+    }).catch(e => console.error(e));
+}
+
 // ---- Exports ----
 window.setGender = setGender;
 window.createPetCard = createPetCard;
