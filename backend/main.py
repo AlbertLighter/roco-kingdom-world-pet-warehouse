@@ -792,6 +792,84 @@ def update_breeding_slots(slots: List[dict] = Body(...)):
     return {"msg": "ok"}
 
 
+@app.post("/api/breeding_slots/add")
+def add_breeding_slot(data: dict = Body(...)):
+    """添加一个推荐方案到家园生蛋配置。
+
+    查找第一个空槽位写入；如果目标精灵已存在某槽位，则覆盖该槽位。
+    Body: {target_base_id, father_serial, mother_serial}
+    """
+    target_base_id = data.get("target_base_id")
+    father_serial = data.get("father_serial")
+    mother_serial = data.get("mother_serial")
+
+    if not target_base_id or not father_serial or not mother_serial:
+        raise HTTPException(status_code=400, detail="缺少必要参数")
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # 校验父方性别
+    cursor.execute("SELECT gender FROM pet_instances WHERE serial_num = ?", (int(father_serial),))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=400, detail=f"父方精灵 {father_serial} 不存在")
+    if row["gender"] == 2:
+        conn.close()
+        raise HTTPException(status_code=400, detail=f"父方精灵 {father_serial} 性别为雌性")
+
+    # 校验母方性别
+    cursor.execute("SELECT gender FROM pet_instances WHERE serial_num = ?", (int(mother_serial),))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=400, detail=f"母方精灵 {mother_serial} 不存在")
+    if row["gender"] == 1:
+        conn.close()
+        raise HTTPException(status_code=400, detail=f"母方精灵 {mother_serial} 性别为雄性")
+
+    # 查找目标精灵是否已占用某个槽位
+    cursor.execute("SELECT slot_id FROM breeding_slots WHERE target_base_id = ?", (target_base_id,))
+    existing = cursor.fetchone()
+
+    if existing:
+        slot_id = existing["slot_id"]
+    else:
+        # 查找第一个空槽位
+        cursor.execute("SELECT slot_id FROM breeding_slots WHERE target_base_id IS NULL ORDER BY slot_id LIMIT 1")
+        empty = cursor.fetchone()
+        if empty:
+            slot_id = empty["slot_id"]
+        else:
+            conn.close()
+            raise HTTPException(status_code=409, detail="5个槽位已满，请先删除一个")
+
+    cursor.execute(
+        "UPDATE breeding_slots SET target_base_id=?, father_serial=?, mother_serial=?, updated_at=datetime('now','localtime') WHERE slot_id=?",
+        (target_base_id, int(father_serial), int(mother_serial), slot_id)
+    )
+    conn.commit()
+    conn.close()
+    return {"slot_id": slot_id, "msg": "ok"}
+
+
+@app.delete("/api/breeding_slots/{slot_id}")
+def clear_breeding_slot(slot_id: int):
+    """清空指定的家园生蛋槽位。"""
+    if not (1 <= slot_id <= 5):
+        raise HTTPException(status_code=400, detail="slot_id 必须在 1-5 之间")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE breeding_slots SET target_base_id=NULL, father_serial=NULL, mother_serial=NULL, updated_at=datetime('now','localtime') WHERE slot_id=?",
+        (slot_id,)
+    )
+    conn.commit()
+    conn.close()
+    return {"msg": "ok"}
+
+
 @app.get("/api/available_parents")
 def get_available_parents():
     """获取所有可作为父母候选的精灵列表（不分槽位，前端自行去重）"""
