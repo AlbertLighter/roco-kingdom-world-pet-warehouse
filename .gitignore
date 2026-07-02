@@ -17,8 +17,10 @@ venv/
 ENV/
 
 # Local databases
-warehouse.db
-warehouse.db-journal
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
 
 # Environment variables (Sensitive data)
 .env
@@ -40,10 +42,17 @@ warehouse.db-journal
 chat
 todo
 
+# Network capture export data
+data/
+
 # Network capture tools / Sensitive data docs
 docs/reqable/
 captures/
 *.har
+
+# Temporary / scratch files
+tmp_*
+*.log
 
 # Frontend (Optional but good to have)
 node_modules/
@@ -51,4 +60,4 @@ node_modules/
 package-lock.json
 yarn.lock
 pnpm-lock.yaml
-.reasonix/*
+.reasonix/
