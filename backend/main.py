@@ -173,6 +173,11 @@ def init_db():
         ("pet_instances", "equip_skill_4", "INTEGER DEFAULT 0"),
         ("pet_instances", "mutation", "INTEGER DEFAULT 0"),
         ("pet_instances", "talent_skill", "INTEGER DEFAULT 0"),
+        ("breeding_slots", "nature_id", "INTEGER"),
+        ("breeding_slots", "talents", "TEXT"),
+        ("breeding_slots", "use_king_ball", "INTEGER DEFAULT 0"),
+        ("breeding_slots", "king_ball_attr", "TEXT"),
+        ("breeding_slots", "breed_big_size", "INTEGER DEFAULT 0"),
     ]
     for table, col, typedef in _migrate_cols:
         try:
@@ -684,7 +689,9 @@ def get_breeding_slots():
 
     cursor.execute("""
         SELECT
-            s.slot_id, s.target_base_id, s.father_serial, s.mother_serial, s.updated_at,
+            s.slot_id, s.target_base_id, s.father_serial, s.mother_serial,
+            s.nature_id, s.talents, s.use_king_ball, s.king_ball_attr, s.breed_big_size,
+            s.updated_at,
             b.name as target_name,
             f.serial_num as f_serial, f.name as f_name, f.level as f_level,
             f.gender as f_gender, f.talent_rank as f_talent_rank,
@@ -712,6 +719,11 @@ def get_breeding_slots():
             "target_name": d["target_name"],
             "father": None,
             "mother": None,
+            "nature_id": d["nature_id"],
+            "talents": d["talents"],
+            "use_king_ball": d["use_king_ball"],
+            "king_ball_attr": d["king_ball_attr"],
+            "breed_big_size": d["breed_big_size"],
             "updated_at": d["updated_at"],
         }
         if d["f_serial"]:
@@ -782,9 +794,18 @@ def update_breeding_slots(slots: List[dict] = Body(...)):
                 conn.close()
                 raise HTTPException(status_code=400, detail=f"母方精灵 {mother} 性别为雄性，不能作为母方")
 
+        # 从 data 中读取配置字段（向后兼容旧请求）
+        nature_id = s.get("nature_id")
+        talents = s.get("talents")
+        if talents and not isinstance(talents, str):
+            talents = json.dumps(talents, ensure_ascii=False)
+        use_king_ball = 1 if s.get("use_king_ball") else 0
+        king_ball_attr = s.get("king_ball_attr")
+        breed_big_size = 1 if s.get("breed_big_size") else 0
         cursor.execute(
-            "UPDATE breeding_slots SET target_base_id=?, father_serial=?, mother_serial=?, updated_at=datetime('now','localtime') WHERE slot_id=?",
-            (target, int(father) if father else None, int(mother) if mother else None, sid)
+            "UPDATE breeding_slots SET target_base_id=?, father_serial=?, mother_serial=?, nature_id=?, talents=?, use_king_ball=?, king_ball_attr=?, breed_big_size=?, updated_at=datetime('now','localtime') WHERE slot_id=?",
+            (target, int(father) if father else None, int(mother) if mother else None,
+             nature_id, talents, use_king_ball, king_ball_attr, breed_big_size, sid)
         )
 
     conn.commit()
@@ -797,7 +818,8 @@ def add_breeding_slot(data: dict = Body(...)):
     """添加一个推荐方案到家园生蛋配置。
 
     查找第一个空槽位写入；如果目标精灵已存在某槽位，则覆盖该槽位。
-    Body: {target_base_id, father_serial, mother_serial}
+    Body: {target_base_id, father_serial, mother_serial,
+           nature_id, talents, use_king_ball, king_ball_attr, breed_big_size}
     """
     target_base_id = data.get("target_base_id")
     father_serial = data.get("father_serial")
@@ -805,6 +827,15 @@ def add_breeding_slot(data: dict = Body(...)):
 
     if not target_base_id or not father_serial or not mother_serial:
         raise HTTPException(status_code=400, detail="缺少必要参数")
+
+    # 可选繁育参数
+    nature_id = data.get("nature_id")
+    talents = data.get("talents")
+    if talents and not isinstance(talents, str):
+        talents = json.dumps(talents, ensure_ascii=False)
+    use_king_ball = 1 if data.get("use_king_ball") else 0
+    king_ball_attr = data.get("king_ball_attr")
+    breed_big_size = 1 if data.get("breed_big_size") else 0
 
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -846,8 +877,8 @@ def add_breeding_slot(data: dict = Body(...)):
             raise HTTPException(status_code=409, detail="5个槽位已满，请先删除一个")
 
     cursor.execute(
-        "UPDATE breeding_slots SET target_base_id=?, father_serial=?, mother_serial=?, updated_at=datetime('now','localtime') WHERE slot_id=?",
-        (target_base_id, int(father_serial), int(mother_serial), slot_id)
+        "UPDATE breeding_slots SET target_base_id=?, father_serial=?, mother_serial=?, nature_id=?, talents=?, use_king_ball=?, king_ball_attr=?, breed_big_size=?, updated_at=datetime('now','localtime') WHERE slot_id=?",
+        (target_base_id, int(father_serial), int(mother_serial), nature_id, talents, use_king_ball, king_ball_attr, breed_big_size, slot_id)
     )
     conn.commit()
     conn.close()
@@ -862,7 +893,7 @@ def clear_breeding_slot(slot_id: int):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE breeding_slots SET target_base_id=NULL, father_serial=NULL, mother_serial=NULL, updated_at=datetime('now','localtime') WHERE slot_id=?",
+        "UPDATE breeding_slots SET target_base_id=NULL, father_serial=NULL, mother_serial=NULL, nature_id=NULL, talents=NULL, use_king_ball=0, king_ball_attr=NULL, breed_big_size=0, updated_at=datetime('now','localtime') WHERE slot_id=?",
         (slot_id,)
     )
     conn.commit()

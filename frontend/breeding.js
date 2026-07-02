@@ -421,7 +421,12 @@ function renderRecommendations(data, occupiedSerials) {
                         body: JSON.stringify({
                             target_base_id: targetId,
                             father_serial: parseInt(btn.dataset.father),
-                            mother_serial: parseInt(btn.dataset.mother)
+                            mother_serial: parseInt(btn.dataset.mother),
+                            nature_id: config.natureId ? parseInt(config.natureId) : null,
+                            talents: config.talents,
+                            use_king_ball: config.useKingBall,
+                            king_ball_attr: config.kingBallAttr,
+                            breed_big_size: config.breedBigSize
                         })
                     });
                     if (res.ok) {
@@ -495,30 +500,34 @@ function renderSlots() {
             }
         });
 
-        // 点击非空槽位应用到繁育配置
+        // 点击非空槽位恢复到繁育配置（从槽位缓存的参数）
         item.addEventListener('click', (e) => {
             if (e.target.closest('.delete-slot-btn')) return;
 
-            // 从历史配置中查找相同目标，恢复性格/天赋等设置
-            const targetId = String(slot.target_base_id);
-            let applied = false;
-            try {
-                const history = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
-                if (Array.isArray(history)) {
-                    const match = history.find(h => h.targetPetId === targetId);
-                    if (match) {
-                        applyConfig(match);
-                        applied = true;
-                    }
-                }
-            } catch (e) { /* ignore */ }
-
-            if (!applied) {
-                targetPetSelect.value = targetId;
-                saveConfig();
+            targetPetSelect.value = String(slot.target_base_id);
+            if (slot.nature_id) {
+                natureSelect.value = String(slot.nature_id);
+            } else {
+                natureSelect.value = '';
             }
+            // 恢复天赋复选框
+            let savedTalents = [];
+            if (slot.talents) {
+                try { savedTalents = JSON.parse(slot.talents); } catch (e) {}
+            }
+            talentChecks.forEach(check => { check.checked = savedTalents.includes(check.value); });
+            // 恢复国王球
+            useKingBall.checked = !!slot.use_king_ball;
+            if (slot.king_ball_attr) {
+                kingBallAttr.value = slot.king_ball_attr;
+            } else {
+                kingBallAttr.value = 'hp';
+            }
+            // 恢复大体型
+            if (breedBigSize) breedBigSize.checked = !!slot.breed_big_size;
 
-            slotsStatus.textContent = `已应用第 ${slot.slot_id} 组到繁育参数`;
+            saveConfig();
+            slotsStatus.textContent = `已应用第 ${slot.slot_id} 组配置`;
             setTimeout(() => { slotsStatus.textContent = ''; }, 2000);
         });
 
