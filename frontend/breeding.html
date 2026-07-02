@@ -6,9 +6,17 @@
     <title>洛克王国：世界 繁育中心</title>
     <link rel="stylesheet" href="style.css?v=2">
     <style>
-        .container {
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100vh;
             display: flex;
-            height: calc(100vh - 150px);
+            flex-direction: column;
+        }
+
+        .container {
+            flex: 1;
+            display: flex;
             overflow: hidden;
         }
 
@@ -17,14 +25,18 @@
             background: #fff;
             border-right: 1px solid #ddd;
             padding: 20px;
+            height: 100%;
             overflow-y: auto;
+            box-sizing: border-box;
             box-shadow: 2px 0 5px rgba(0,0,0,0.05);
         }
 
         .main-content {
             flex: 1;
             padding: 20px;
+            height: 100%;
             overflow-y: auto;
+            box-sizing: border-box;
             background: #f4f7f6;
         }
 
