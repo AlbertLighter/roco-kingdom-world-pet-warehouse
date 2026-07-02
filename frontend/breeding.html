@@ -8,7 +8,7 @@
     <style>
         .container {
             display: flex;
-            height: calc(100vh - 80px);
+            height: calc(100vh - 150px);
             overflow: hidden;
         }
 
@@ -170,38 +170,58 @@
 
         /* 顶部生蛋配置栏 */
         .top-breeding-bar {
-            background: #f8f9fa;
-            border-bottom: 1px solid #e9ecef;
-            padding: 10px 24px;
+            background: #fff;
+            margin: 12px 24px;
+            padding: 14px 20px;
             display: flex;
             align-items: center;
             gap: 20px;
             flex-wrap: wrap;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.08);
         }
         .top-breeding-bar h3 {
             margin: 0;
-            font-size: 1em;
+            font-size: 0.95em;
             white-space: nowrap;
+            color: #2c3e50;
+            border-bottom: none;
+            padding-bottom: 0;
         }
         .top-breeding-bar .slots-row {
             display: flex;
-            gap: 10px;
+            gap: 8px;
             flex: 1;
             min-width: 0;
             overflow-x: auto;
+            padding: 2px 0;
         }
         .top-breeding-bar .slot-editor {
             flex: 1;
-            min-width: 160px;
-            max-width: 220px;
-            background: #fff;
-            border: 1px solid #dee2e6;
+            min-width: 150px;
+            max-width: 200px;
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
             border-radius: 6px;
             padding: 8px 10px;
             margin-bottom: 0;
         }
+        .top-breeding-bar .slot-editor .slot-header {
+            font-weight: bold;
+            font-size: 0.8em;
+            color: #2c3e50;
+            margin-bottom: 6px;
+            display: flex;
+            justify-content: space-between;
+        }
         .top-breeding-bar .slot-editor select {
             font-size: 0.72em;
+        }
+        .top-breeding-bar .slot-editor label {
+            font-size: 0.7em;
+            color: #7f8c8d;
+            display: block;
+            margin-top: 3px;
         }
         .top-breeding-bar .slot-actions {
             display: flex;
@@ -209,11 +229,20 @@
             white-space: nowrap;
         }
         .top-breeding-bar .slot-actions button {
-            padding: 6px 14px;
+            padding: 8px 18px;
             font-size: 0.85em;
             border-radius: 4px;
             border: none;
             cursor: pointer;
+            font-weight: bold;
+            transition: opacity 0.2s;
+        }
+        .top-breeding-bar .slot-actions button:hover {
+            opacity: 0.85;
+        }
+        .top-breeding-bar .slot-actions button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
         }
     </style>
 </head>
