@@ -126,6 +126,47 @@
         .nav-links a:hover {
             text-decoration: underline;
         }
+
+        .slot-editor {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 6px;
+            padding: 10px;
+            margin-bottom: 8px;
+        }
+        .slot-editor .slot-header {
+            font-weight: bold;
+            font-size: 0.85em;
+            color: #2c3e50;
+            margin-bottom: 6px;
+            display: flex;
+            justify-content: space-between;
+        }
+        .slot-editor select {
+            width: 100%;
+            padding: 4px 6px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+            font-size: 0.78em;
+            margin-bottom: 4px;
+            box-sizing: border-box;
+        }
+        .slot-editor label {
+            font-size: 0.75em;
+            color: #555;
+            display: block;
+            margin-top: 4px;
+        }
+        .slot-editor .slot-changed {
+            color: #e67e22;
+            font-size: 0.75em;
+            font-weight: normal;
+        }
+        .slot-editor .slot-ok {
+            color: #27ae60;
+            font-size: 0.75em;
+            font-weight: normal;
+        }
     </style>
 </head>
 <body>
@@ -190,6 +231,22 @@
 
             <button id="recommendBtn" class="recommend-btn">开始推荐</button>
 
+            <!-- 家园生蛋配置 -->
+            <div class="breeding-slots-section" style="margin-top: 30px; border-top: 1px solid #eee; padding-top: 20px;">
+                <h3 style="display: flex; justify-content: space-between; align-items: center;">
+                    家园生蛋配置
+                    <span style="font-size:0.7em;color:#7f8c8d;">(5组/10个精灵)</span>
+                    <div>
+                        <button id="checkSlotsBtn" style="font-size:0.6em;background:none;border:1px solid #3498db;color:#3498db;cursor:pointer;padding:2px 5px;border-radius:3px;">检测</button>
+                    </div>
+                </h3>
+                <div id="slotsContainer">
+                    <!-- 5个槽位由 JS 动态渲染 -->
+                </div>
+                <button id="saveSlotsBtn" class="recommend-btn" style="background-color:#27ae60;margin-top:5px;">保存生蛋配置</button>
+                <div id="slotsStatus" style="margin-top:5px;font-size:0.85em;color:#7f8c8d;"></div>
+            </div>
+
             <div class="history-section" style="margin-top: 30px; border-top: 1px solid #eee; padding-top: 20px;">
                 <h3 style="display: flex; justify-content: space-between; align-items: center;">
                     历史配置
@@ -212,6 +269,6 @@
         </main>
     </div>
 
-    <script src="breeding.js?v=2"></script>
+    <script src="breeding.js?v=3"></script>
 </body>
 </html>

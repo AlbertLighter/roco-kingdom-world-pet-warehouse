@@ -379,4 +379,213 @@ function renderRecommendations(data) {
     });
 }
 
+// ---- 家园生蛋配置 ----
+let breedingSlots = [];       // 当前槽位配置 [{slot_id, target_base_id, target_name, father, mother}]
+let availableMales = [];      // 可选父方
+let availableFemales = [];    // 可选母方
+
+const slotsContainer = document.getElementById('slotsContainer');
+const saveSlotsBtn = document.getElementById('saveSlotsBtn');
+const checkSlotsBtn = document.getElementById('checkSlotsBtn');
+const slotsStatus = document.getElementById('slotsStatus');
+
+function renderPetOption(pet) {
+    const rankLabel = ['普', '良', '优', '极'][pet.talent_rank - 1] || '?';
+    const genderLabel = ['', '♂', '♀'][pet.gender] || '?';
+    if (pet.nature_name) {
+        return `#${pet.serial_num} ${pet.name} Lv.${pet.level} [${rankLabel}] ${genderLabel} ${pet.nature_name}`;
+    }
+    return `#${pet.serial_num} ${pet.name} Lv.${pet.level} [${rankLabel}] ${genderLabel}`;
+}
+
+function renderSlots() {
+    slotsContainer.innerHTML = '';
+
+    // 收集所有槽位已选中的 serial_num（除当前正在编辑的槽位之外）
+    function getOccupiedSerials(excludeSlotId) {
+        const set = new Set();
+        breedingSlots.forEach(s => {
+            if (s.slot_id === excludeSlotId) return;
+            if (s.father) set.add(s.father.serial_num);
+            if (s.mother) set.add(s.mother.serial_num);
+        });
+        return set;
+    }
+
+    breedingSlots.forEach((slot, idx) => {
+        const div = document.createElement('div');
+        div.className = 'slot-editor';
+        div.dataset.slotId = slot.slot_id;
+
+        // Header
+        const header = document.createElement('div');
+        header.className = 'slot-header';
+        header.innerHTML = `<span>第 ${idx + 1} 组</span><span id="slotStatus_${slot.slot_id}"></span>`;
+        div.appendChild(header);
+
+        // Target
+        const targetLabel = document.createElement('label');
+        targetLabel.textContent = '目标精灵';
+        div.appendChild(targetLabel);
+        const targetSel = document.createElement('select');
+        targetSel.className = 'slot-target';
+        targetSel.innerHTML = '<option value="">选择目标...</option>';
+        allBasePets.forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p.objId;
+            opt.textContent = p.name;
+            if (slot.target_base_id === p.objId) opt.selected = true;
+            targetSel.appendChild(opt);
+        });
+        targetSel.addEventListener('change', () => { slot.target_base_id = targetSel.value ? parseInt(targetSel.value) : null; });
+        div.appendChild(targetSel);
+
+        // Father
+        const occupied = getOccupiedSerials(slot.slot_id);
+        const fatherLabel = document.createElement('label');
+        fatherLabel.textContent = '父方 ♂';
+        div.appendChild(fatherLabel);
+        const fatherSel = document.createElement('select');
+        fatherSel.className = 'slot-father';
+        fatherSel.innerHTML = '<option value="">选择父方...</option>';
+        availableMales.forEach(p => {
+            if (occupied.has(p.serial_num)) return;
+            const opt = document.createElement('option');
+            opt.value = p.serial_num;
+            opt.textContent = renderPetOption(p);
+            if (slot.father && slot.father.serial_num === p.serial_num) opt.selected = true;
+            fatherSel.appendChild(opt);
+        });
+        fatherSel.addEventListener('change', () => {
+            const sn = fatherSel.value ? parseInt(fatherSel.value) : null;
+            const pet = availableMales.find(p => p.serial_num === sn);
+            slot.father = pet ? { serial_num: pet.serial_num, name: pet.name, level: pet.level, gender: pet.gender, talent_rank: pet.talent_rank, nature_name: pet.nature_name } : null;
+        });
+        div.appendChild(fatherSel);
+
+        // Mother
+        const motherLabel = document.createElement('label');
+        motherLabel.textContent = '母方 ♀';
+        div.appendChild(motherLabel);
+        const motherSel = document.createElement('select');
+        motherSel.className = 'slot-mother';
+        motherSel.innerHTML = '<option value="">选择母方...</option>';
+        availableFemales.forEach(p => {
+            if (occupied.has(p.serial_num)) return;
+            const opt = document.createElement('option');
+            opt.value = p.serial_num;
+            opt.textContent = renderPetOption(p);
+            if (slot.mother && slot.mother.serial_num === p.serial_num) opt.selected = true;
+            motherSel.appendChild(opt);
+        });
+        motherSel.addEventListener('change', () => {
+            const sn = motherSel.value ? parseInt(motherSel.value) : null;
+            const pet = availableFemales.find(p => p.serial_num === sn);
+            slot.mother = pet ? { serial_num: pet.serial_num, name: pet.name, level: pet.level, gender: pet.gender, talent_rank: pet.talent_rank, nature_name: pet.nature_name } : null;
+        });
+        div.appendChild(motherSel);
+
+        slotsContainer.appendChild(div);
+    });
+}
+
+async function loadBreedingSlots() {
+    try {
+        const [slotsRes, parentsRes] = await Promise.all([
+            fetch('/api/breeding_slots'),
+            fetch('/api/available_parents')
+        ]);
+        breedingSlots = await slotsRes.json();
+        const parents = await parentsRes.json();
+        availableMales = parents.males || [];
+        availableFemales = parents.females || [];
+        renderSlots();
+    } catch (e) {
+        slotsStatus.textContent = '加载生蛋配置失败';
+    }
+}
+
+async function saveBreedingSlots() {
+    const payload = breedingSlots.map(slot => ({
+        slot_id: slot.slot_id,
+        target_base_id: slot.target_base_id,
+        father_serial: slot.father ? slot.father.serial_num : null,
+        mother_serial: slot.mother ? slot.mother.serial_num : null,
+    }));
+    // 检查10个精灵不重复
+    const used = new Set();
+    for (const p of payload) {
+        if (p.father_serial) {
+            if (used.has(p.father_serial)) { slotsStatus.textContent = `精灵 #${p.father_serial} 重复使用`; return; }
+            used.add(p.father_serial);
+        }
+        if (p.mother_serial) {
+            if (used.has(p.mother_serial)) { slotsStatus.textContent = `精灵 #${p.mother_serial} 重复使用`; return; }
+            used.add(p.mother_serial);
+        }
+    }
+    try {
+        slotsStatus.textContent = '保存中...';
+        const res = await fetch('/api/breeding_slots', {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            slotsStatus.textContent = '保存失败: ' + (err.detail || JSON.stringify(err));
+            return;
+        }
+        slotsStatus.textContent = '生蛋配置已保存 ✓';
+        await loadBreedingSlots();  // 刷新
+    } catch (e) {
+        slotsStatus.textContent = '保存失败';
+    }
+}
+
+async function checkSlotsUpdate() {
+    slotsStatus.textContent = '检测中...';
+    try {
+        const res = await fetch('/api/check_breeding_slots');
+        const results = await res.json();
+        let changedCount = 0;
+        results.forEach(r => {
+            const statusEl = document.getElementById('slotStatus_' + r.slot_id);
+            if (!statusEl) return;
+            if (!r.has_match) {
+                statusEl.className = '';
+                statusEl.textContent = '⚠ 无匹配';
+                return;
+            }
+            if (r.changed) {
+                statusEl.className = 'slot-changed';
+                statusEl.textContent = `↻ 推荐更新: ${r.best_father_name} × ${r.best_mother_name}`;
+                changedCount++;
+            } else {
+                statusEl.className = 'slot-ok';
+                statusEl.textContent = '✓ 当前最优';
+            }
+        });
+        if (changedCount > 0) {
+            slotsStatus.textContent = `检测完成，${changedCount} 组有更优推荐`;
+        } else {
+            slotsStatus.textContent = '检测完成，所有配置已是最优 ✓';
+        }
+    } catch (e) {
+        slotsStatus.textContent = '检测失败';
+    }
+}
+
+// 暴露给 app.js（同步完成后调用）
+window.checkBreedingSlots = checkSlotsUpdate;
+
+saveSlotsBtn.addEventListener('click', saveBreedingSlots);
+checkSlotsBtn.addEventListener('click', checkSlotsUpdate);
+
+// 在 init 完成后加载生蛋配置
+const _origInit = init;
+init = async function() {
+    await _origInit();
+    await loadBreedingSlots();
+};
 init();

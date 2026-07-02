@@ -430,6 +430,8 @@ function handleSyncEvent(data) {
         fetchPets();
         fetchRefreshTime();
         checkSyncStatus();
+        // 同步后检测家园生蛋配置
+        checkBreedingAfterSync();
         return;
     }
     const { message, current, total } = data;
@@ -453,6 +455,107 @@ function resetSyncBtn() {
     syncBtn.disabled = false;
     syncBtn.style.background = '#27ae60';
     syncBtn.textContent = '同步精灵';
+}
+
+// ---- 性别同步 ----
+const syncGenderBtn = document.getElementById('syncGenderBtn');
+const syncGenderProgress = document.getElementById('syncGenderProgress');
+const syncGenderProgressBar = document.getElementById('syncGenderProgressBar');
+const syncGenderProgressText = document.getElementById('syncGenderProgressText');
+const syncGenderLog = document.getElementById('syncGenderLog');
+
+syncGenderBtn.addEventListener('click', async () => {
+    syncGenderBtn.disabled = true;
+    syncGenderBtn.style.background = '#95a5a6';
+    syncGenderBtn.textContent = '同步中...';
+    syncGenderProgress.style.display = 'block';
+    syncGenderLog.innerHTML = '';
+    syncGenderProgressBar.style.width = '0%';
+    syncGenderProgressText.textContent = '0%';
+    try {
+        const response = await fetch('/api/sync_gender_export', { method: 'POST' });
+        if (!response.ok) {
+            const err = await response.json();
+            addGenderSyncLog(`❌ ${err.detail || '同步失败'}`);
+            resetGenderSyncBtn();
+            return;
+        }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    try { handleGenderSyncEvent(JSON.parse(line.slice(6))); } catch (e) { /* ignore */ }
+                }
+            }
+        }
+    } catch (error) { addGenderSyncLog(`❌ 网络错误: ${error.message}`); }
+    resetGenderSyncBtn();
+});
+
+function handleGenderSyncEvent(data) {
+    if (data.error) { addGenderSyncLog(`❌ 错误: ${data.error}`); return; }
+    if (data.done) {
+        syncGenderProgressBar.style.width = '100%';
+        syncGenderProgressText.textContent = '100%';
+        const r = data.result || {};
+        addGenderSyncLog(`✅ 性别同步完成！更新 ${r.updated || 0} 条，匹配 ${r.matched || 0} 条`);
+        fetchPets();
+        return;
+    }
+    const { message, current, total } = data;
+    addGenderSyncLog(message);
+    if (total > 0) {
+        const pct = Math.round((current / total) * 100);
+        syncGenderProgressBar.style.width = `${pct}%`;
+        syncGenderProgressText.textContent = `${pct}% (${current}/${total})`;
+    }
+}
+
+function addGenderSyncLog(text) {
+    const line = document.createElement('div');
+    line.textContent = text;
+    line.style.padding = '1px 0';
+    syncGenderLog.appendChild(line);
+    syncGenderLog.scrollTop = syncGenderLog.scrollHeight;
+}
+
+function resetGenderSyncBtn() {
+    syncGenderBtn.disabled = false;
+    syncGenderBtn.style.background = '#8e44ad';
+    syncGenderBtn.textContent = '同步性别';
+}
+
+// ---- 家园生蛋同步检测 ----
+async function checkBreedingAfterSync() {
+    try {
+        const res = await fetch('/api/breeding_slots');
+        const slots = await res.json();
+        const configured = slots.filter(s => s.target_base_id && s.father && s.mother);
+        if (configured.length === 0) return;
+
+        addSyncLog('🔍 正在检测家园生蛋推荐...');
+        const checkRes = await fetch('/api/check_breeding_slots');
+        const results = await checkRes.json();
+        const changed = results.filter(r => r.changed);
+        if (changed.length > 0) {
+            changed.forEach(r => {
+                addSyncLog(`📌 第 ${r.slot_id} 组「${r.target_name}」有更优推荐: ${r.best_father_name} × ${r.best_mother_name}`);
+            });
+            addSyncLog(`💡 共 ${changed.length} 组需要更新，前往繁育中心查看`);
+        } else {
+            const hasAny = results.filter(r => r.has_match).length;
+            if (hasAny > 0) addSyncLog('✅ 家园生蛋配置已是最优');
+        }
+    } catch (e) {
+        // 忽略（可能 breeding_slots 表不存在或未同步）
+    }
 }
 
 // ---- 初始化 ----

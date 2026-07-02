@@ -189,6 +189,22 @@ def init_db():
     """)
 
     # egg_group_mapping: 蛋组映射
+    # breeding_slots: 家园繁育槽位（5组×父/母/目标）
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS breeding_slots (
+        slot_id INTEGER PRIMARY KEY CHECK(slot_id BETWEEN 1 AND 5),
+        target_base_id INTEGER,
+        father_serial INTEGER,
+        mother_serial INTEGER,
+        updated_at TEXT DEFAULT (datetime('now', 'localtime')),
+        FOREIGN KEY (father_serial) REFERENCES pet_instances(serial_num),
+        FOREIGN KEY (mother_serial) REFERENCES pet_instances(serial_num)
+    )
+    """)
+    # 确保5个默认槽位存在
+    for i in range(1, 6):
+        cursor.execute("INSERT OR IGNORE INTO breeding_slots (slot_id) VALUES (?)", (i,))
+
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS egg_group_mapping (
         group_id INTEGER PRIMARY KEY,
@@ -219,6 +235,7 @@ app = FastAPI(lifespan=lifespan)
 
 # Global lock to prevent concurrent sync runs
 _sync_lock = threading.Lock()
+_gender_sync_lock = threading.Lock()
 
 # 允许跨域
 app.add_middleware(
@@ -453,6 +470,57 @@ def update_gender(serial_num: int = Body(...), gender: int = Body(...)):
     conn.close()
     return {"msg": "Gender updated"}
 
+
+@app.post("/api/sync_gender_export")
+def sync_gender_from_export_endpoint():
+    """从 data/ 目录的抓包导出文件同步精灵性别，通过 SSE 流式返回进度。"""
+    if not _gender_sync_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="性别同步任务正在运行中")
+
+    def event_stream():
+        import queue as _queue
+
+        progress_queue = _queue.Queue()
+
+        def progress_callback(message, current=0, total=0):
+            progress_queue.put({
+                "message": message,
+                "current": current,
+                "total": total
+            })
+
+        def run_task():
+            try:
+                from scripts.sync_gender_from_export import sync_gender_from_export
+                result = sync_gender_from_export(progress_callback=progress_callback)
+                progress_queue.put({"done": True, "result": result})
+            except Exception as e:
+                progress_queue.put({"done": True, "error": str(e)})
+            finally:
+                _gender_sync_lock.release()
+
+        thread = threading.Thread(target=run_task, daemon=True)
+        thread.start()
+
+        while True:
+            try:
+                msg = progress_queue.get(timeout=60)
+            except _queue.Empty:
+                yield f"data: {json.dumps({'message': '心跳...', 'current': 0, 'total': 0})}\n\n"
+                continue
+
+            if msg.get("done"):
+                if msg.get("error"):
+                    yield f"data: {json.dumps({'error': msg['error']})}\n\n"
+                else:
+                    yield f"data: {json.dumps({'done': True, 'result': msg.get('result', {})})}\n\n"
+                break
+            else:
+                yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
 _STAT_COLS = {
     "hp": "hp_talent",
     "adAttack": "adAttack_talent",
@@ -593,6 +661,279 @@ def recommend_parents(
     recommendations.sort(key=lambda x: x["score"], reverse=True)
     conn.close()
     return recommendations[:10]
+
+
+# ---- 家园生蛋配置（5组配对） ----
+def _get_pet_minimal(pet_row: dict) -> dict:
+    """Extract a minimal pet summary from a raw DB row."""
+    return {
+        "serial_num": pet_row["serial_num"],
+        "name": pet_row["base_name"] or pet_row["name"],
+        "level": pet_row["level"],
+        "gender": pet_row["gender"],
+        "talent_rank": pet_row["talent_rank"],
+        "nature_name": pet_row.get("nature_name"),
+    }
+
+
+@app.get("/api/breeding_slots")
+def get_breeding_slots():
+    """获取全部5个繁育槽位配置（含宠物详情）"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT
+            s.slot_id, s.target_base_id, s.father_serial, s.mother_serial, s.updated_at,
+            b.name as target_name,
+            f.serial_num as f_serial, f.name as f_name, f.level as f_level,
+            f.gender as f_gender, f.talent_rank as f_talent_rank,
+            fn.name as f_nature_name,
+            m.serial_num as m_serial, m.name as m_name, m.level as m_level,
+            m.gender as m_gender, m.talent_rank as m_talent_rank,
+            mn.name as m_nature_name
+        FROM breeding_slots s
+        LEFT JOIN pet_base_info b ON s.target_base_id = b.objId
+        LEFT JOIN pet_instances f ON s.father_serial = f.serial_num
+        LEFT JOIN pet_natures fn ON f.nature = fn.id
+        LEFT JOIN pet_instances m ON s.mother_serial = m.serial_num
+        LEFT JOIN pet_natures mn ON m.nature = mn.id
+        ORDER BY s.slot_id
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+
+    slots = []
+    for row in rows:
+        d = dict(row)
+        slot = {
+            "slot_id": d["slot_id"],
+            "target_base_id": d["target_base_id"],
+            "target_name": d["target_name"],
+            "father": None,
+            "mother": None,
+            "updated_at": d["updated_at"],
+        }
+        if d["f_serial"]:
+            slot["father"] = {
+                "serial_num": d["f_serial"], "name": d["f_name"],
+                "level": d["f_level"], "gender": d["f_gender"],
+                "talent_rank": d["f_talent_rank"], "nature_name": d["f_nature_name"],
+            }
+        if d["m_serial"]:
+            slot["mother"] = {
+                "serial_num": d["m_serial"], "name": d["m_name"],
+                "level": d["m_level"], "gender": d["m_gender"],
+                "talent_rank": d["m_talent_rank"], "nature_name": d["m_nature_name"],
+            }
+        slots.append(slot)
+    return slots
+
+
+@app.put("/api/breeding_slots")
+def update_breeding_slots(slots: List[dict] = Body(...)):
+    """批量更新繁育槽位（5组）。Body: [{slot_id, target_base_id, father_serial, mother_serial}]"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # 收集所有被占用的 serial_num 去重检查
+    used = set()
+    for s in slots:
+        sid = s.get("slot_id")
+        if not sid or not (1 <= sid <= 5):
+            continue
+        father = s.get("father_serial")
+        mother = s.get("mother_serial")
+        for p in [father, mother]:
+            if p is not None:
+                p_int = int(p)
+                if p_int in used:
+                    conn.close()
+                    raise HTTPException(status_code=400, detail=f"精灵 {p_int} 在多个槽位中重复，每个精灵只能出现一次")
+                used.add(p_int)
+
+    for s in slots:
+        sid = s.get("slot_id")
+        if not sid or not (1 <= sid <= 5):
+            continue
+        target = s.get("target_base_id")
+        father = s.get("father_serial")
+        mother = s.get("mother_serial")
+
+        # 校验 father 性别
+        if father is not None:
+            cursor.execute("SELECT gender FROM pet_instances WHERE serial_num = ?", (int(father),))
+            row = cursor.fetchone()
+            if not row:
+                conn.close()
+                raise HTTPException(status_code=400, detail=f"父方精灵 {father} 不存在")
+            if row["gender"] == 2:
+                conn.close()
+                raise HTTPException(status_code=400, detail=f"父方精灵 {father} 性别为雌性，不能作为父方")
+
+        # 校验 mother 性别
+        if mother is not None:
+            cursor.execute("SELECT gender FROM pet_instances WHERE serial_num = ?", (int(mother),))
+            row = cursor.fetchone()
+            if not row:
+                conn.close()
+                raise HTTPException(status_code=400, detail=f"母方精灵 {mother} 不存在")
+            if row["gender"] == 1:
+                conn.close()
+                raise HTTPException(status_code=400, detail=f"母方精灵 {mother} 性别为雄性，不能作为母方")
+
+        cursor.execute(
+            "UPDATE breeding_slots SET target_base_id=?, father_serial=?, mother_serial=?, updated_at=datetime('now','localtime') WHERE slot_id=?",
+            (target, int(father) if father else None, int(mother) if mother else None, sid)
+        )
+
+    conn.commit()
+    conn.close()
+    return {"msg": "ok"}
+
+
+@app.get("/api/available_parents")
+def get_available_parents():
+    """获取所有可作为父母候选的精灵列表（不分槽位，前端自行去重）"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # 所有 active 且已知性别的宠物
+    cursor.execute("""
+        SELECT i.serial_num, i.name, i.level, i.gender, i.talent_rank,
+               b.egg_group_int, b.objId,
+               n.name as nature_name
+        FROM pet_instances i
+        JOIN pet_base_info b ON i.base_id = b.objId
+        LEFT JOIN pet_natures n ON i.nature = n.id
+        WHERE i.is_active = 1 AND i.gender IN (1, 2)
+        ORDER BY i.serial_num
+    """)
+    all_pets = [dict(r) for r in cursor.fetchall()]
+    conn.close()
+
+    males = [{
+        "serial_num": p["serial_num"], "name": p["name"],
+        "level": p["level"], "gender": p["gender"],
+        "talent_rank": p["talent_rank"], "nature_name": p["nature_name"],
+        "objId": p["objId"],
+    } for p in all_pets if p["gender"] == 1]
+
+    females = [{
+        "serial_num": p["serial_num"], "name": p["name"],
+        "level": p["level"], "gender": p["gender"],
+        "talent_rank": p["talent_rank"], "nature_name": p["nature_name"],
+        "objId": p["objId"],
+    } for p in all_pets if p["gender"] == 2]
+
+    return {"males": males, "females": females}
+
+
+@app.get("/api/check_breeding_slots")
+def check_breeding_slots():
+    """检测所有已配置的繁育槽位是否需要更新推荐。对每个槽位重新跑推荐算法，
+    比较当前最优父母与已选父母是否一致。"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT COUNT(*) FROM pet_natures")
+    natures_count = cursor.fetchone()[0] or 30
+
+    cursor.execute("""
+        SELECT s.*, b.evolutionId, b.name as target_name
+        FROM breeding_slots s
+        JOIN pet_base_info b ON s.target_base_id = b.objId
+        WHERE s.target_base_id IS NOT NULL
+          AND s.father_serial IS NOT NULL
+          AND s.mother_serial IS NOT NULL
+        ORDER BY s.slot_id
+    """)
+    slots = [dict(r) for r in cursor.fetchall()]
+
+    results = []
+    for slot in slots:
+        target_evo_ids = set(json.loads(slot["evolutionId"]) if slot["evolutionId"] else [])
+        slot_id = slot["slot_id"]
+        current_father = slot["father_serial"]
+        current_mother = slot["mother_serial"]
+
+        # 查询母方候选（决定种族）
+        cursor.execute("""
+            SELECT i.*, b.familyId, b.egg_groups, b.evolutionId, b.name as base_name,
+                   n.name as nature_name, n.plus_stat as nature_plus, n.minus_stat as nature_minus
+            FROM pet_instances i
+            JOIN pet_base_info b ON i.base_id = b.objId
+            LEFT JOIN pet_natures n ON i.nature = n.id
+            WHERE i.is_active = 1 AND i.gender != 1
+        """)
+        mothers = []
+        for row in cursor.fetchall():
+            d = dict(row)
+            evo_ids = set(json.loads(d["evolutionId"]) if d["evolutionId"] else [])
+            if evo_ids.issubset(target_evo_ids):
+                mothers.append(d)
+
+        # 父方候选
+        cursor.execute("""
+            SELECT i.*, b.familyId, b.egg_groups, b.evolutionId, b.name as base_name,
+                   n.name as nature_name, n.plus_stat as nature_plus, n.minus_stat as nature_minus
+            FROM pet_instances i
+            JOIN pet_base_info b ON i.base_id = b.objId
+            LEFT JOIN pet_natures n ON i.nature = n.id
+            WHERE i.is_active = 1 AND i.gender != 2
+        """)
+        fathers = [dict(row) for row in cursor.fetchall()]
+
+        # 打分，找到最优
+        best_pair = None
+        best_score = -1
+        for mother in mothers:
+            m_eggs = set(json.loads(mother["egg_groups"]) if mother["egg_groups"] else [])
+            m_excellent = _get_excellent_stats(mother)
+            for father in fathers:
+                f_eggs = set(json.loads(father["egg_groups"]) if father["egg_groups"] else [])
+                if not m_eggs.intersection(f_eggs):
+                    continue
+                f_excellent = _get_excellent_stats(father)
+                calc = BreedCalculator(f_excellent, m_excellent, None)
+                attr_prob = calc.get_target_prob([])
+                total_prob = attr_prob * 1.0
+                size_score = _get_size_score(mother) + _get_size_score(father) / 2
+                score = round(total_prob * 100 + size_score * 50, 2)
+                if score > best_score:
+                    best_score = score
+                    best_pair = {
+                        "father_serial": father["serial_num"],
+                        "father_name": father["base_name"],
+                        "mother_serial": mother["serial_num"],
+                        "mother_name": mother["base_name"],
+                        "score": score,
+                    }
+
+        changed = not (
+            best_pair
+            and best_pair["father_serial"] == current_father
+            and best_pair["mother_serial"] == current_mother
+        ) if best_pair else False
+
+        results.append({
+            "slot_id": slot_id,
+            "target_base_id": slot["target_base_id"],
+            "target_name": slot["target_name"],
+            "current_father_serial": current_father,
+            "current_mother_serial": current_mother,
+            "best_father_serial": best_pair["father_serial"] if best_pair else None,
+            "best_father_name": best_pair["father_name"] if best_pair else None,
+            "best_mother_serial": best_pair["mother_serial"] if best_pair else None,
+            "best_mother_name": best_pair["mother_name"] if best_pair else None,
+            "best_score": best_pair["score"] if best_pair else None,
+            "changed": changed,
+            "has_match": best_pair is not None,
+        })
+
+    conn.close()
+    return results
+
 
 @app.post("/api/sync")
 def sync_pets():
