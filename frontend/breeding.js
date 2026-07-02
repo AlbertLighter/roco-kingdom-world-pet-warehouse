@@ -498,8 +498,26 @@ function renderSlots() {
         // 点击非空槽位应用到繁育配置
         item.addEventListener('click', (e) => {
             if (e.target.closest('.delete-slot-btn')) return;
-            targetPetSelect.value = slot.target_base_id;
-            saveConfig();
+
+            // 从历史配置中查找相同目标，恢复性格/天赋等设置
+            const targetId = String(slot.target_base_id);
+            let applied = false;
+            try {
+                const history = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+                if (Array.isArray(history)) {
+                    const match = history.find(h => h.targetPetId === targetId);
+                    if (match) {
+                        applyConfig(match);
+                        applied = true;
+                    }
+                }
+            } catch (e) { /* ignore */ }
+
+            if (!applied) {
+                targetPetSelect.value = targetId;
+                saveConfig();
+            }
+
             slotsStatus.textContent = `已应用第 ${slot.slot_id} 组到繁育参数`;
             setTimeout(() => { slotsStatus.textContent = ''; }, 2000);
         });
