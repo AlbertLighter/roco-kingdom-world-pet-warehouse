@@ -256,6 +256,55 @@
             opacity: 0.5;
             cursor: not-allowed;
         }
+
+        /* 槽位列表样式 */
+        .slot-list-item {
+            padding: 10px;
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 6px;
+            font-size: 0.85em;
+            position: relative;
+            transition: all 0.2s;
+        }
+        .slot-list-item:hover {
+            background: #e9ecef;
+        }
+        .slot-list-item.empty {
+            color: #bdc3c7;
+            text-align: center;
+            padding: 14px;
+        }
+        .slot-list-item .slot-title {
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 4px;
+        }
+        .slot-list-item .slot-detail {
+            color: #7f8c8d;
+            font-size: 0.9em;
+            margin-top: 2px;
+        }
+        .slot-list-item .slot-detail span {
+            display: inline-block;
+            margin-right: 12px;
+        }
+        .slot-list-item .slot-status {
+            margin-top: 4px;
+            font-size: 0.85em;
+        }
+        .slot-list-item .delete-slot-btn {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            background: none;
+            border: none;
+            color: #e74c3c;
+            cursor: pointer;
+            padding: 2px 5px;
+            font-weight: bold;
+            font-size: 1.1em;
+        }
     </style>
 </head>
 <body>
@@ -267,66 +316,7 @@
     <div class="top-breeding-bar">
         <h3>家园生蛋配置 <span style="font-size:0.7em;color:#7f8c8d;font-weight:normal;">(5组/10个精灵)</span></h3>
         <div class="slots-row" id="slotsContainer">
-            <div class="slot-editor" data-slot-id="1">
-                <div class="slot-header">
-                    <span>第 1 组</span>
-                    <span id="slotStatus_1"></span>
-                </div>
-                <label>目标精灵</label>
-                <select class="slot-target"><option value="">选择目标...</option></select>
-                <label>父方 ♂</label>
-                <select class="slot-father"><option value="">选择父方...</option></select>
-                <label>母方 ♀</label>
-                <select class="slot-mother"><option value="">选择母方...</option></select>
-            </div>
-            <div class="slot-editor" data-slot-id="2">
-                <div class="slot-header">
-                    <span>第 2 组</span>
-                    <span id="slotStatus_2"></span>
-                </div>
-                <label>目标精灵</label>
-                <select class="slot-target"><option value="">选择目标...</option></select>
-                <label>父方 ♂</label>
-                <select class="slot-father"><option value="">选择父方...</option></select>
-                <label>母方 ♀</label>
-                <select class="slot-mother"><option value="">选择母方...</option></select>
-            </div>
-            <div class="slot-editor" data-slot-id="3">
-                <div class="slot-header">
-                    <span>第 3 组</span>
-                    <span id="slotStatus_3"></span>
-                </div>
-                <label>目标精灵</label>
-                <select class="slot-target"><option value="">选择目标...</option></select>
-                <label>父方 ♂</label>
-                <select class="slot-father"><option value="">选择父方...</option></select>
-                <label>母方 ♀</label>
-                <select class="slot-mother"><option value="">选择母方...</option></select>
-            </div>
-            <div class="slot-editor" data-slot-id="4">
-                <div class="slot-header">
-                    <span>第 4 组</span>
-                    <span id="slotStatus_4"></span>
-                </div>
-                <label>目标精灵</label>
-                <select class="slot-target"><option value="">选择目标...</option></select>
-                <label>父方 ♂</label>
-                <select class="slot-father"><option value="">选择父方...</option></select>
-                <label>母方 ♀</label>
-                <select class="slot-mother"><option value="">选择母方...</option></select>
-            </div>
-            <div class="slot-editor" data-slot-id="5">
-                <div class="slot-header">
-                    <span>第 5 组</span>
-                    <span id="slotStatus_5"></span>
-                </div>
-                <label>目标精灵</label>
-                <select class="slot-target"><option value="">选择目标...</option></select>
-                <label>父方 ♂</label>
-                <select class="slot-father"><option value="">选择父方...</option></select>
-                <label>母方 ♀</label>
-                <select class="slot-mother"><option value="">选择母方...</option></select>
-            </div>
+            <!-- 由 JS 动态渲染 -->
         </div>
         <div class="slot-actions">
             <button id="saveSlotsBtn" style="background:#27ae60;color:#fff;">保存</button>

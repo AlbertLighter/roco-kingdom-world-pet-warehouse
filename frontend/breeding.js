@@ -374,106 +374,105 @@ function renderRecommendations(data) {
             </div>
             <div class="pet-card-wrapper"><h4>母方 (决定种族)</h4>${createPetCard(rec.mother)}</div>
             <div class="pet-card-wrapper"><h4>父方</h4>${createPetCard(rec.father)}</div>
+            <div style="width:100%;text-align:right;margin-top:10px;">
+                <button class="add-slot-btn" data-father="${rec.father.serial_num}" data-mother="${rec.mother.serial_num}" style="padding:8px 20px;background:#8e44ad;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:bold;font-size:0.9em;">
+                    ＋ 加入家园生蛋配置
+                </button>
+            </div>
         `;
+        pairDiv.querySelector('.add-slot-btn').addEventListener('click', async (e) => {
+            const btn = e.currentTarget;
+            const config = getCurrentConfig();
+            const targetId = parseInt(config.targetPetId);
+            if (!targetId) { btn.textContent = '✗ 请先选择目标精灵'; return; }
+            btn.disabled = true;
+            btn.textContent = '加入中...';
+            try {
+                const res = await fetch('/api/breeding_slots/add', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        target_base_id: targetId,
+                        father_serial: parseInt(btn.dataset.father),
+                        mother_serial: parseInt(btn.dataset.mother)
+                    })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    btn.textContent = `✓ 已加入第 ${data.slot_id} 组`;
+                    btn.style.background = '#27ae60';
+                    await loadBreedingSlots();
+                } else {
+                    const err = await res.json();
+                    btn.textContent = '✗ ' + (err.detail || '失败');
+                    btn.disabled = false;
+                    btn.style.background = '#e74c3c';
+                    setTimeout(() => { btn.textContent = '＋ 加入家园生蛋配置'; btn.style.background = '#8e44ad'; btn.disabled = false; }, 2000);
+                }
+            } catch (e) {
+                btn.textContent = '✗ 网络错误';
+                btn.disabled = false;
+                btn.style.background = '#e74c3c';
+            }
+        });
         recommendationResults.appendChild(pairDiv);
     });
 }
 
 // ---- 家园生蛋配置 ----
 let breedingSlots = [];       // 当前槽位配置 [{slot_id, target_base_id, target_name, father, mother}]
-let availableMales = [];      // 可选父方
-let availableFemales = [];    // 可选母方
 
 const saveSlotsBtn = document.getElementById('saveSlotsBtn');
 const checkSlotsBtn = document.getElementById('checkSlotsBtn');
 const slotsStatus = document.getElementById('slotsStatus');
 
-function renderPetOption(pet) {
-    const rankLabel = ['普', '良', '优', '极'][pet.talent_rank - 1] || '?';
-    const genderLabel = ['', '♂', '♀'][pet.gender] || '?';
-    if (pet.nature_name) {
-        return `#${pet.serial_num} ${pet.name} Lv.${pet.level} [${rankLabel}] ${genderLabel} ${pet.nature_name}`;
-    }
-    return `#${pet.serial_num} ${pet.name} Lv.${pet.level} [${rankLabel}] ${genderLabel}`;
-}
-
 function renderSlots() {
-    // 收集所有槽位已选中的 serial_num（除当前正在编辑的槽位之外）
-    function getOccupiedSerials(excludeSlotId) {
-        const set = new Set();
-        breedingSlots.forEach(s => {
-            if (s.slot_id === excludeSlotId) return;
-            if (s.father) set.add(s.father.serial_num);
-            if (s.mother) set.add(s.mother.serial_num);
+    const container = document.getElementById('slotsContainer');
+    container.innerHTML = '';
+
+    breedingSlots.forEach(slot => {
+        const item = document.createElement('div');
+        item.className = 'slot-list-item';
+
+        if (!slot.target_base_id) {
+            item.innerHTML = `<div class="slot-title">第 ${slot.slot_id} 组</div><div class="slot-detail" style="color:#bdc3c7;">空 — 前往推荐方案点击「加入家园生蛋配置」</div>`;
+            container.appendChild(item);
+            return;
+        }
+
+        const statusId = `slotStatus_${slot.slot_id}`;
+        const genderMark = (g) => ['', '♂', '♀'][g] || '';
+        const fatherStr = slot.father ? `#${slot.father.serial_num} ${slot.father.name} ${genderMark(slot.father.gender)}` : '-';
+        const motherStr = slot.mother ? `#${slot.mother.serial_num} ${slot.mother.name} ${genderMark(slot.mother.gender)}` : '-';
+
+        item.innerHTML = `
+            <div class="slot-title">第 ${slot.slot_id} 组 — ${slot.target_name || '未知目标'}</div>
+            <div class="slot-detail">
+                <span>父: ${fatherStr}</span>
+                <span>母: ${motherStr}</span>
+            </div>
+            <div class="slot-status"><span id="${statusId}"></span></div>
+            <button class="delete-slot-btn" data-slot="${slot.slot_id}" title="清空此槽位">×</button>
+        `;
+
+        item.querySelector('.delete-slot-btn').addEventListener('click', async (e) => {
+            const sid = parseInt(e.currentTarget.dataset.slot);
+            try {
+                await fetch(`/api/breeding_slots/${sid}`, { method: 'DELETE' });
+                await loadBreedingSlots();
+            } catch (err) {
+                slotsStatus.textContent = '删除失败';
+            }
         });
-        return set;
-    }
 
-    document.querySelectorAll('#slotsContainer .slot-editor').forEach(editor => {
-        const slotId = parseInt(editor.dataset.slotId);
-        const slot = breedingSlots.find(s => s.slot_id === slotId);
-        if (!slot) return;
-
-        const targetSel = editor.querySelector('.slot-target');
-        const fatherSel = editor.querySelector('.slot-father');
-        const motherSel = editor.querySelector('.slot-mother');
-
-        // 填充目标精灵选项
-        targetSel.innerHTML = '<option value="">选择目标...</option>';
-        allBasePets.forEach(p => {
-            const opt = document.createElement('option');
-            opt.value = p.objId;
-            opt.textContent = p.name;
-            if (slot.target_base_id === p.objId) opt.selected = true;
-            targetSel.appendChild(opt);
-        });
-        targetSel.onchange = () => { slot.target_base_id = targetSel.value ? parseInt(targetSel.value) : null; };
-
-        // 填充父方选项
-        const occupied = getOccupiedSerials(slotId);
-        fatherSel.innerHTML = '<option value="">选择父方...</option>';
-        availableMales.forEach(p => {
-            if (occupied.has(p.serial_num)) return;
-            const opt = document.createElement('option');
-            opt.value = p.serial_num;
-            opt.textContent = renderPetOption(p);
-            if (slot.father && slot.father.serial_num === p.serial_num) opt.selected = true;
-            fatherSel.appendChild(opt);
-        });
-        fatherSel.onchange = () => {
-            const sn = fatherSel.value ? parseInt(fatherSel.value) : null;
-            const pet = availableMales.find(p => p.serial_num === sn);
-            slot.father = pet ? { serial_num: pet.serial_num, name: pet.name, level: pet.level, gender: pet.gender, talent_rank: pet.talent_rank, nature_name: pet.nature_name } : null;
-        };
-
-        // 填充母方选项
-        motherSel.innerHTML = '<option value="">选择母方...</option>';
-        availableFemales.forEach(p => {
-            if (occupied.has(p.serial_num)) return;
-            const opt = document.createElement('option');
-            opt.value = p.serial_num;
-            opt.textContent = renderPetOption(p);
-            if (slot.mother && slot.mother.serial_num === p.serial_num) opt.selected = true;
-            motherSel.appendChild(opt);
-        });
-        motherSel.onchange = () => {
-            const sn = motherSel.value ? parseInt(motherSel.value) : null;
-            const pet = availableFemales.find(p => p.serial_num === sn);
-            slot.mother = pet ? { serial_num: pet.serial_num, name: pet.name, level: pet.level, gender: pet.gender, talent_rank: pet.talent_rank, nature_name: pet.nature_name } : null;
-        };
+        container.appendChild(item);
     });
 }
 
 async function loadBreedingSlots() {
     try {
-        const [slotsRes, parentsRes] = await Promise.all([
-            fetch('/api/breeding_slots'),
-            fetch('/api/available_parents')
-        ]);
+        const slotsRes = await fetch('/api/breeding_slots');
         breedingSlots = await slotsRes.json();
-        const parents = await parentsRes.json();
-        availableMales = parents.males || [];
-        availableFemales = parents.females || [];
         renderSlots();
     } catch (e) {
         slotsStatus.textContent = '加载生蛋配置失败';
