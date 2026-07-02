@@ -351,18 +351,43 @@ recommendBtn.addEventListener('click', async () => {
         })
     });
     const data = await res.json();
-    renderRecommendations(data);
+    // 获取已占用的精灵集合
+    let occupiedSerials = new Set();
+    try {
+        const slotsRes = await fetch('/api/breeding_slots');
+        const slots = await slotsRes.json();
+        slots.forEach(s => {
+            if (s.father) occupiedSerials.add(s.father.serial_num);
+            if (s.mother) occupiedSerials.add(s.mother.serial_num);
+        });
+    } catch (e) { /* 忽略 */ }
+    renderRecommendations(data, occupiedSerials);
 });
 
-function renderRecommendations(data) {
+function renderRecommendations(data, occupiedSerials) {
     recommendationResults.innerHTML = '';
     if (data.length === 0) {
         recommendationResults.innerHTML = '<div style="text-align:center;color:#e74c3c;margin-top:100px;"><h2>未找到合适的父母组合</h2><p>建议：请确保您已经在仓库主列表中设置了精灵的性别，或者尝试减少期望天赋要求。</p></div>';
         return;
     }
     data.forEach((rec, i) => {
+        const fatherOccupied = occupiedSerials && occupiedSerials.has(rec.father.serial_num);
+        const motherOccupied = occupiedSerials && occupiedSerials.has(rec.mother.serial_num);
+        const anyOccupied = fatherOccupied || motherOccupied;
         const pairDiv = document.createElement('div');
         pairDiv.className = 'recommendation-pair';
+
+        // 在 createPetCard 生成的 HTML 中注入占用标记
+        function markOccupied(cardHtml, side) {
+            const badge = side === 'father' && fatherOccupied ? '<span style="position:absolute;top:5px;right:5px;background:#e74c3c;color:#fff;padding:2px 8px;border-radius:3px;font-size:0.75em;font-weight:bold;z-index:1;">已占用</span>' :
+                         side === 'mother' && motherOccupied ? '<span style="position:absolute;top:5px;right:5px;background:#e74c3c;color:#fff;padding:2px 8px;border-radius:3px;font-size:0.75em;font-weight:bold;z-index:1;">已占用</span>' : '';
+            if (badge) {
+                const idx = cardHtml.indexOf('>', cardHtml.indexOf('<div class="pet-card'));
+                return cardHtml.slice(0, idx + 1) + badge + cardHtml.slice(idx + 1);
+            }
+            return cardHtml;
+        }
+
         pairDiv.innerHTML = `
             <div class="pair-info">
                 <span>推荐方案 #${i+1}</span>
@@ -372,49 +397,52 @@ function renderRecommendations(data) {
                     <div style="color:#7f8c8d;font-size:0.8em;">继承成功率: ${(rec.probability * 100).toFixed(2)}%</div>
                 </div>
             </div>
-            <div class="pet-card-wrapper"><h4>母方 (决定种族)</h4>${createPetCard(rec.mother)}</div>
-            <div class="pet-card-wrapper"><h4>父方</h4>${createPetCard(rec.father)}</div>
+            <div class="pet-card-wrapper" style="position:relative;"><h4>母方 (决定种族)</h4>${markOccupied(createPetCard(rec.mother), 'mother')}</div>
+            <div class="pet-card-wrapper" style="position:relative;"><h4>父方</h4>${markOccupied(createPetCard(rec.father), 'father')}</div>
             <div style="width:100%;text-align:right;margin-top:10px;">
-                <button class="add-slot-btn" data-father="${rec.father.serial_num}" data-mother="${rec.mother.serial_num}" style="padding:8px 20px;background:#8e44ad;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:bold;font-size:0.9em;">
-                    ＋ 加入家园生蛋配置
+                <button class="add-slot-btn" data-father="${rec.father.serial_num}" data-mother="${rec.mother.serial_num}" style="padding:8px 20px;background:${anyOccupied ? '#95a5a6' : '#8e44ad'};color:#fff;border:none;border-radius:4px;cursor:${anyOccupied ? 'not-allowed' : 'pointer'};font-weight:bold;font-size:0.9em;" ${anyOccupied ? 'disabled' : ''}>
+                    ${anyOccupied ? '已占用' : '＋ 加入家园生蛋配置'}
                 </button>
             </div>
         `;
-        pairDiv.querySelector('.add-slot-btn').addEventListener('click', async (e) => {
-            const btn = e.currentTarget;
-            const config = getCurrentConfig();
-            const targetId = parseInt(config.targetPetId);
-            if (!targetId) { btn.textContent = '✗ 请先选择目标精灵'; return; }
-            btn.disabled = true;
-            btn.textContent = '加入中...';
-            try {
-                const res = await fetch('/api/breeding_slots/add', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        target_base_id: targetId,
-                        father_serial: parseInt(btn.dataset.father),
-                        mother_serial: parseInt(btn.dataset.mother)
-                    })
-                });
-                if (res.ok) {
-                    const data = await res.json();
-                    btn.textContent = `✓ 已加入第 ${data.slot_id} 组`;
-                    btn.style.background = '#27ae60';
-                    await loadBreedingSlots();
-                } else {
-                    const err = await res.json();
-                    btn.textContent = '✗ ' + (err.detail || '失败');
+
+        if (!anyOccupied) {
+            pairDiv.querySelector('.add-slot-btn').addEventListener('click', async (e) => {
+                const btn = e.currentTarget;
+                const config = getCurrentConfig();
+                const targetId = parseInt(config.targetPetId);
+                if (!targetId) { btn.textContent = '✗ 请先选择目标精灵'; return; }
+                btn.disabled = true;
+                btn.textContent = '加入中...';
+                try {
+                    const res = await fetch('/api/breeding_slots/add', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            target_base_id: targetId,
+                            father_serial: parseInt(btn.dataset.father),
+                            mother_serial: parseInt(btn.dataset.mother)
+                        })
+                    });
+                    if (res.ok) {
+                        const data = await res.json();
+                        btn.textContent = `\u2713 已加入第 ${data.slot_id} 组`;
+                        btn.style.background = '#27ae60';
+                        await loadBreedingSlots();
+                    } else {
+                        const err = await res.json();
+                        btn.textContent = '\u2717 ' + (err.detail || '失败');
+                        btn.disabled = false;
+                        btn.style.background = '#e74c3c';
+                        setTimeout(() => { btn.textContent = '\uff0b 加入家园生蛋配置'; btn.style.background = '#8e44ad'; btn.disabled = false; }, 2000);
+                    }
+                } catch (e) {
+                    btn.textContent = '\u2717 网络错误';
                     btn.disabled = false;
                     btn.style.background = '#e74c3c';
-                    setTimeout(() => { btn.textContent = '＋ 加入家园生蛋配置'; btn.style.background = '#8e44ad'; btn.disabled = false; }, 2000);
                 }
-            } catch (e) {
-                btn.textContent = '✗ 网络错误';
-                btn.disabled = false;
-                btn.style.background = '#e74c3c';
-            }
-        });
+            });
+        }
         recommendationResults.appendChild(pairDiv);
     });
 }
@@ -435,6 +463,7 @@ function renderSlots() {
         item.className = 'slot-list-item';
 
         if (!slot.target_base_id) {
+            item.classList.add('empty');
             item.innerHTML = `<div class="slot-title">第 ${slot.slot_id} 组</div><div class="slot-detail" style="color:#bdc3c7;">空 — 前往推荐方案点击「加入家园生蛋配置」</div>`;
             container.appendChild(item);
             return;
@@ -456,6 +485,7 @@ function renderSlots() {
         `;
 
         item.querySelector('.delete-slot-btn').addEventListener('click', async (e) => {
+            e.stopPropagation();
             const sid = parseInt(e.currentTarget.dataset.slot);
             try {
                 await fetch(`/api/breeding_slots/${sid}`, { method: 'DELETE' });
@@ -463,6 +493,15 @@ function renderSlots() {
             } catch (err) {
                 slotsStatus.textContent = '删除失败';
             }
+        });
+
+        // 点击非空槽位应用到繁育配置
+        item.addEventListener('click', (e) => {
+            if (e.target.closest('.delete-slot-btn')) return;
+            targetPetSelect.value = slot.target_base_id;
+            saveConfig();
+            slotsStatus.textContent = `已应用第 ${slot.slot_id} 组到繁育参数`;
+            setTimeout(() => { slotsStatus.textContent = ''; }, 2000);
         });
 
         container.appendChild(item);
