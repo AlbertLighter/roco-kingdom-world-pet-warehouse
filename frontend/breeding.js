@@ -384,7 +384,6 @@ let breedingSlots = [];       // 当前槽位配置 [{slot_id, target_base_id, t
 let availableMales = [];      // 可选父方
 let availableFemales = [];    // 可选母方
 
-const slotsContainer = document.getElementById('slotsContainer');
 const saveSlotsBtn = document.getElementById('saveSlotsBtn');
 const checkSlotsBtn = document.getElementById('checkSlotsBtn');
 const slotsStatus = document.getElementById('slotsStatus');
@@ -399,8 +398,6 @@ function renderPetOption(pet) {
 }
 
 function renderSlots() {
-    slotsContainer.innerHTML = '';
-
     // 收集所有槽位已选中的 serial_num（除当前正在编辑的槽位之外）
     function getOccupiedSerials(excludeSlotId) {
         const set = new Set();
@@ -412,23 +409,16 @@ function renderSlots() {
         return set;
     }
 
-    breedingSlots.forEach((slot, idx) => {
-        const div = document.createElement('div');
-        div.className = 'slot-editor';
-        div.dataset.slotId = slot.slot_id;
+    document.querySelectorAll('#slotsContainer .slot-editor').forEach(editor => {
+        const slotId = parseInt(editor.dataset.slotId);
+        const slot = breedingSlots.find(s => s.slot_id === slotId);
+        if (!slot) return;
 
-        // Header
-        const header = document.createElement('div');
-        header.className = 'slot-header';
-        header.innerHTML = `<span>第 ${idx + 1} 组</span><span id="slotStatus_${slot.slot_id}"></span>`;
-        div.appendChild(header);
+        const targetSel = editor.querySelector('.slot-target');
+        const fatherSel = editor.querySelector('.slot-father');
+        const motherSel = editor.querySelector('.slot-mother');
 
-        // Target
-        const targetLabel = document.createElement('label');
-        targetLabel.textContent = '目标精灵';
-        div.appendChild(targetLabel);
-        const targetSel = document.createElement('select');
-        targetSel.className = 'slot-target';
+        // 填充目标精灵选项
         targetSel.innerHTML = '<option value="">选择目标...</option>';
         allBasePets.forEach(p => {
             const opt = document.createElement('option');
@@ -437,16 +427,10 @@ function renderSlots() {
             if (slot.target_base_id === p.objId) opt.selected = true;
             targetSel.appendChild(opt);
         });
-        targetSel.addEventListener('change', () => { slot.target_base_id = targetSel.value ? parseInt(targetSel.value) : null; });
-        div.appendChild(targetSel);
+        targetSel.onchange = () => { slot.target_base_id = targetSel.value ? parseInt(targetSel.value) : null; };
 
-        // Father
-        const occupied = getOccupiedSerials(slot.slot_id);
-        const fatherLabel = document.createElement('label');
-        fatherLabel.textContent = '父方 ♂';
-        div.appendChild(fatherLabel);
-        const fatherSel = document.createElement('select');
-        fatherSel.className = 'slot-father';
+        // 填充父方选项
+        const occupied = getOccupiedSerials(slotId);
         fatherSel.innerHTML = '<option value="">选择父方...</option>';
         availableMales.forEach(p => {
             if (occupied.has(p.serial_num)) return;
@@ -456,19 +440,13 @@ function renderSlots() {
             if (slot.father && slot.father.serial_num === p.serial_num) opt.selected = true;
             fatherSel.appendChild(opt);
         });
-        fatherSel.addEventListener('change', () => {
+        fatherSel.onchange = () => {
             const sn = fatherSel.value ? parseInt(fatherSel.value) : null;
             const pet = availableMales.find(p => p.serial_num === sn);
             slot.father = pet ? { serial_num: pet.serial_num, name: pet.name, level: pet.level, gender: pet.gender, talent_rank: pet.talent_rank, nature_name: pet.nature_name } : null;
-        });
-        div.appendChild(fatherSel);
+        };
 
-        // Mother
-        const motherLabel = document.createElement('label');
-        motherLabel.textContent = '母方 ♀';
-        div.appendChild(motherLabel);
-        const motherSel = document.createElement('select');
-        motherSel.className = 'slot-mother';
+        // 填充母方选项
         motherSel.innerHTML = '<option value="">选择母方...</option>';
         availableFemales.forEach(p => {
             if (occupied.has(p.serial_num)) return;
@@ -478,14 +456,11 @@ function renderSlots() {
             if (slot.mother && slot.mother.serial_num === p.serial_num) opt.selected = true;
             motherSel.appendChild(opt);
         });
-        motherSel.addEventListener('change', () => {
+        motherSel.onchange = () => {
             const sn = motherSel.value ? parseInt(motherSel.value) : null;
             const pet = availableFemales.find(p => p.serial_num === sn);
             slot.mother = pet ? { serial_num: pet.serial_num, name: pet.name, level: pet.level, gender: pet.gender, talent_rank: pet.talent_rank, nature_name: pet.nature_name } : null;
-        });
-        div.appendChild(motherSel);
-
-        slotsContainer.appendChild(div);
+        };
     });
 }
 
