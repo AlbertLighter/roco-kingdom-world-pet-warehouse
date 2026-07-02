@@ -797,7 +797,7 @@ def update_breeding_slots(slots: List[dict] = Body(...)):
         # 从 data 中读取配置字段（向后兼容旧请求）
         nature_id = s.get("nature_id")
         talents = s.get("talents")
-        if talents and not isinstance(talents, str):
+        if talents is not None and not isinstance(talents, str):
             talents = json.dumps(talents, ensure_ascii=False)
         use_king_ball = 1 if s.get("use_king_ball") else 0
         king_ball_attr = s.get("king_ball_attr")
@@ -831,7 +831,7 @@ def add_breeding_slot(data: dict = Body(...)):
     # 可选繁育参数
     nature_id = data.get("nature_id")
     talents = data.get("talents")
-    if talents and not isinstance(talents, str):
+    if talents is not None and not isinstance(talents, str):
         talents = json.dumps(talents, ensure_ascii=False)
     use_king_ball = 1 if data.get("use_king_ball") else 0
     king_ball_attr = data.get("king_ball_attr")
