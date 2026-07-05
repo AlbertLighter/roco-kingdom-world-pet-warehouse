@@ -581,7 +581,10 @@ def run_sync(progress_callback=None):
         summary += f"，{fail_count} 只失败"
     report(summary, detail_total, detail_total)
     conn.close()
-    return {"new": new_count, "updated": updated_count, "total": total_pets}
+    # 收集失败详情
+    fail_details = [f"#{sn}: {err}" for sn, ok, err in results if not ok and err]
+    return {"new": new_count, "updated": updated_count, "total": total_pets,
+            "fail_count": fail_count, "fail_details": fail_details}
 
 
 if __name__ == "__main__":

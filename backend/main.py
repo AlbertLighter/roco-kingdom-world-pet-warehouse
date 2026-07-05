@@ -1373,6 +1373,10 @@ def sync_pets():
                 result = run_sync(progress_callback=progress_callback)
                 progress_queue.put({"done": True, "result": result})
                 _sync_logger.info(f"同步完成：新增 {result.get('new', 0)} 只，更新 {result.get('updated', 0)} 只，共 {result.get('total', 0)} 只")
+                fail_count = result.get("fail_count", 0)
+                if fail_count:
+                    for detail in result.get("fail_details", []):
+                        _sync_logger.warning(f"  同步失败 -> {detail}")
             except Exception as e:
                 _sync_logger.error(f"同步失败: {e}")
                 progress_queue.put({"done": True, "error": str(e)})
