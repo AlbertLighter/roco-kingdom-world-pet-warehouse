@@ -6,6 +6,7 @@ import threading
 import sys
 import os
 import time
+import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Query, HTTPException, Body
 from fastapi.responses import StreamingResponse
@@ -15,6 +16,17 @@ from typing import Optional, List
 
 # Add project root to path so we can import scripts
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# ---- 日志配置 ----
+_LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "logs")
+os.makedirs(_LOG_DIR, exist_ok=True)
+
+_sync_logger = logging.getLogger("sync")
+_sync_logger.setLevel(logging.INFO)
+_handler = logging.FileHandler(os.path.join(_LOG_DIR, "sync.log"), encoding="utf-8", mode="a")
+_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+_sync_logger.handlers.clear()
+_sync_logger.addHandler(_handler)
 
 
 
@@ -1060,6 +1072,7 @@ def check_breeding_slots():
 def sync_pets():
     """Stream pet sync progress via SSE."""
     if not _sync_lock.acquire(blocking=False):
+        _sync_logger.warning("同步被拒绝：已有任务在运行")
         raise HTTPException(status_code=409, detail="同步任务正在运行中")
 
     def event_stream():
@@ -1077,7 +1090,9 @@ def sync_pets():
                 from scripts.fetcher import run_sync
                 result = run_sync(progress_callback=progress_callback)
                 progress_queue.put({"done": True, "result": result})
+                _sync_logger.info(f"同步完成：新增 {result.get('new', 0)} 只，更新 {result.get('updated', 0)} 只，共 {result.get('total', 0)} 只")
             except Exception as e:
+                _sync_logger.error(f"同步失败: {e}")
                 progress_queue.put({"done": True, "error": str(e)})
             finally:
                 _sync_lock.release()
