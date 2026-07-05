@@ -1059,23 +1059,6 @@ def check_breeding_slots():
 @app.post("/api/sync")
 def sync_pets():
     """Stream pet sync progress via SSE."""
-    # Check cooldown based on pet refresh time
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT value FROM settings WHERE key = 'refresh_deadline'")
-    row = cursor.fetchone()
-    conn.close()
-
-    if row:
-        deadline = float(row[0])
-        remaining = deadline - time.time()
-        if remaining > 0:
-            deadline_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(deadline))
-            raise HTTPException(status_code=429, detail={
-                "message": f"宠物尚未刷新，刷新时间: {deadline_str}",
-                "remaining_seconds": int(remaining)
-            })
-
     if not _sync_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="同步任务正在运行中")
 
@@ -1123,27 +1106,8 @@ def sync_pets():
 
 @app.get("/api/sync_status")
 def get_sync_status():
-    """Get sync cooldown status based on pet refresh time."""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT value FROM settings WHERE key = 'refresh_deadline'")
-    row = cursor.fetchone()
-    conn.close()
-
-    if not row:
-        return {"cooldown_active": False, "can_sync": True}
-
-    deadline = float(row[0])
-    remaining = deadline - time.time()
-
-    if remaining <= 0:
-        return {"cooldown_active": False, "can_sync": True}
-
-    return {
-        "cooldown_active": True,
-        "can_sync": False,
-        "remaining_seconds": int(remaining)
-    }
+    """Get sync cooldown status — always ready. Kept for frontend backward compat."""
+    return {"cooldown_active": False, "can_sync": True}
 
 
 @app.get("/api/refresh_time")

@@ -356,42 +356,8 @@ const syncProgress = document.getElementById('syncProgress');
 const syncProgressBar = document.getElementById('syncProgressBar');
 const syncProgressText = document.getElementById('syncProgressText');
 const syncLog = document.getElementById('syncLog');
-let cooldownTimer = null;
-
-function formatTime(seconds) {
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = seconds % 60;
-    return h > 0 ? `${h}小时${m}分${s}秒` : m > 0 ? `${m}分${s}秒` : `${s}秒`;
-}
-
-function startCooldown(remainingSeconds) {
-    syncBtn.disabled = true;
-    syncBtn.style.background = '#95a5a6';
-    syncBtn.style.cursor = 'not-allowed';
-    function updateTimer() {
-        if (remainingSeconds <= 0) {
-            clearInterval(cooldownTimer);
-            cooldownTimer = null;
-            syncBtn.disabled = false;
-            syncBtn.style.background = '#27ae60';
-            syncBtn.style.cursor = 'pointer';
-            syncBtn.textContent = '同步精灵';
-            return;
-        }
-        syncBtn.textContent = `冷却中 (${formatTime(remainingSeconds)})`;
-        remainingSeconds--;
-    }
-    updateTimer();
-    cooldownTimer = setInterval(updateTimer, 1000);
-}
-
 async function checkSyncStatus() {
-    try {
-        const response = await fetch('/api/sync_status');
-        const data = await response.json();
-        if (data.cooldown_active) startCooldown(data.remaining_seconds);
-    } catch (error) { console.error('Failed to check sync status:', error); }
+    // 不再需要冷却，仅保留兼容
 }
 
 syncBtn.addEventListener('click', async () => {
@@ -406,10 +372,8 @@ syncBtn.addEventListener('click', async () => {
         const response = await fetch('/api/sync', { method: 'POST' });
         if (!response.ok) {
             const err = await response.json();
-            if (response.status === 429) {
-                addSyncLog(`❌ ${err.detail.message}`);
-                startCooldown(err.detail.remaining_seconds);
-            } else { addSyncLog(`❌ ${err.detail?.message || err.detail || '同步失败'}`); resetSyncBtn(); }
+            addSyncLog(`❌ ${err.detail?.message || err.detail || '同步失败'}`);
+            resetSyncBtn();
             return;
         }
         const reader = response.body.getReader();
@@ -440,7 +404,6 @@ function handleSyncEvent(data) {
         addSyncLog(`✅ 同步完成！新增 ${r.new || 0} 只，更新 ${r.updated || 0} 只，共 ${r.total || 0} 只`);
         fetchPets();
         fetchRefreshTime();
-        checkSyncStatus();
         // 同步后检测家园生蛋配置
         checkBreedingAfterSync();
         return;
@@ -574,7 +537,6 @@ async function init() {
     await fetchConfigs();
     fetchPets();
     fetchRefreshTime();
-    checkSyncStatus();
 }
 window.setGender = setGender;
 init();
