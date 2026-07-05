@@ -7,6 +7,24 @@ let typeMap = {};
 let medalMap = {};
 let talentSkillMap = {};
 
+// 放生推荐缓存
+let releaseMap = {};           // serial_num → {is_recommended, score, reasons}
+let speciesPrefsList = [];    // 品种偏好列表（用于配置弹窗）
+let currentConfigBaseId = null;
+
+const natureMap = {
+    1: "大胆", 2: "固执", 3: "调皮", 4: "勇敢", 5: "逞强",
+    6: "稳重", 7: "天真", 8: "懒散", 9: "悠闲", 10: "坦率",
+    11: "聪明", 12: "专注", 13: "偏执", 14: "冷静", 15: "理性",
+    16: "警惕", 17: "温顺", 18: "害羞", 19: "慎重", 20: "焦虑",
+    21: "胆小", 22: "急躁", 23: "开朗", 24: "莽撞", 25: "热情",
+    26: "沉默", 27: "忧郁", 28: "平和", 29: "粗心", 30: "踏实"
+};
+
+function getNatureName(id) {
+    return natureMap[id] || ('未知(' + id + ')');
+}
+
 function escapeHtml(str) {
     if (!str) return '';
     const div = document.createElement('div');
@@ -52,6 +70,28 @@ const prevBtn = document.getElementById('prevBtn');
 const nextBtn = document.getElementById('nextBtn');
 const pageInfo = document.getElementById('pageInfo');
 const refreshTimeValue = document.getElementById('refreshTimeValue');
+
+async function fetchReleaseData() {
+    try {
+        const res = await fetch('/api/release_recommendations?page=1&page_size=5000');
+        if (!res.ok) return;
+        const data = await res.json();
+        speciesPrefsList = data.species_groups || [];
+        releaseMap = {};
+        for (const group of speciesPrefsList) {
+            for (const p of group.pets || []) {
+                releaseMap[p.serial_num] = {
+                    is_recommended: p.is_recommended,
+                    is_kept: p.is_kept,
+                    score: p.score,
+                    reasons: p.reasons || [],
+                };
+            }
+        }
+    } catch (e) {
+        console.warn('获取放生推荐失败:', e);
+    }
+}
 
 async function fetchRefreshTime() {
     try {
@@ -267,8 +307,27 @@ function createPetCard(pet) {
     const escapedNaturePlus = escapeHtml(pet.nature_plus || '-');
     const escapedNatureMinus = escapeHtml(pet.nature_minus || '-');
 
+    // 放生推荐状态
+    const releaseInfo = releaseMap[pet.serial_num];
+    let releaseBadge = '';
+    let releaseClass = '';
+    let releaseReasons = '';
+    if (releaseInfo) {
+        if (releaseInfo.is_recommended) {
+            releaseBadge = `<span class="release-badge rec">❌ 建议放生</span>`;
+            releaseClass = 'card-recommended';
+            if (releaseInfo.reasons && releaseInfo.reasons.length > 0) {
+                const reasonsText = escapeHtml(releaseInfo.reasons.join('；'));
+                releaseReasons = `<div style="font-size:0.72em;color:#e74c3c;margin-top:2px;" title="${reasonsText}">${reasonsText}</div>`;
+            }
+        } else if (releaseInfo.is_kept) {
+            releaseBadge = `<span class="release-badge kept">✅ 保留</span>`;
+            releaseClass = 'card-kept';
+        }
+    }
+
     return `
-        <div class="pet-card ${genderClass}">
+        <div class="pet-card ${genderClass} ${releaseClass}">
             <!-- 头部 -->
             <div class="pet-header">
                 <div class="pet-header-left">
@@ -286,6 +345,7 @@ function createPetCard(pet) {
                 ${typeNames.map(t => `<span class="badge badge-type">${escapeHtml(t)}</span>`).join('')}
                 ${getTalentSkillName(pet.talent_skill) ? `<span class="badge badge-talent-skill">⭐ ${escapeHtml(getTalentSkillName(pet.talent_skill))}</span>` : ''}
                 ${pet.mutation ? `<span class="badge" style="background:#fce4ec;color:#c62828;display:inline-flex;align-items:center;gap:3px;"><img src="https://game.gtimg.cn/images/rocom/rocodata/MutationDiffType/${pet.mutation}.png" style="height:16px;width:auto;" onerror="this.style.display='none'"> 异色</span>` : ''}
+                ${releaseBadge}
             </div>
 
             <!-- 雷达图 -->
@@ -309,13 +369,17 @@ function createPetCard(pet) {
                 ${medals.length ? `<div title="${escapeHtml(pet.medal)}">🏅 ${escapeHtml(medals.join(', ').substring(0, 20))}${medals.join(', ').length > 20 ? '…' : ''}</div>` : '<div>🏅 -</div>'}
             </div>
 
+            <!-- 放生原因 -->
+            ${releaseReasons}
+
             <!-- 天赋评级 -->
             <div class="talent-rank rank-${pet.talent_rank}">天赋评级: ${talentRankLabel}</div>
 
-            <!-- 性别设置 -->
+            <!-- 性别设置 + 品种配置 -->
             <div class="gender-setter">
                 <button onclick="setGender(${pet.serial_num}, 1)">设为♂</button>
                 <button onclick="setGender(${pet.serial_num}, 2)">设为♀</button>
+                <button onclick="openSpeciesConfig(${pet.base_id}, '${escapeHtml(pet.base_name || pet.name)}')" style="margin-left:6px;padding:4px 8px;background:#f39c12;color:white;border:none;border-radius:3px;cursor:pointer;font-size:0.78em;">⚙️</button>
             </div>
         </div>
     `;
@@ -532,11 +596,94 @@ async function checkBreedingAfterSync() {
     }
 }
 
+// ---- 品种配置弹窗 ----
+function getSpeciesConfig(baseId) {
+    // 从 speciesPrefsList 中查找配置
+    const group = speciesPrefsList.find(g => g.base_id == baseId);
+    return group ? group.config : null;
+}
+
+function openSpeciesConfig(baseId, speciesName) {
+    currentConfigBaseId = baseId;
+    document.getElementById('speciesConfigTitle').textContent = `配置 - ${speciesName}`;
+    document.getElementById('speciesKeepCount').value = 3;
+
+    const select = document.getElementById('speciesNatureSelect');
+    select.innerHTML = '';
+    for (let i = 1; i <= 30; i++) {
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.textContent = getNatureName(i);
+        select.appendChild(opt);
+    }
+
+    const config = getSpeciesConfig(baseId);
+    if (config) {
+        const ids = config.preferred_nature_ids || [];
+        for (const opt of select.options) {
+            opt.selected = ids.includes(parseInt(opt.value));
+        }
+        document.getElementById('speciesKeepCount').value = config.keep_count || 3;
+    }
+
+    document.getElementById('speciesConfigModal').style.display = 'flex';
+}
+
+function closeSpeciesConfigModal() {
+    document.getElementById('speciesConfigModal').style.display = 'none';
+    currentConfigBaseId = null;
+}
+
+async function saveSpeciesConfig() {
+    if (!currentConfigBaseId) return;
+    const select = document.getElementById('speciesNatureSelect');
+    const natureIds = Array.from(select.selectedOptions).map(o => parseInt(o.value));
+    const keepCount = parseInt(document.getElementById('speciesKeepCount').value) || 3;
+
+    try {
+        const res = await fetch('/api/species_preferences', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                preferences: [{
+                    base_id: currentConfigBaseId,
+                    preferred_nature_ids: natureIds,
+                    keep_count: keepCount
+                }]
+            })
+        });
+        if (res.ok) {
+            closeSpeciesConfigModal();
+            await fetchReleaseData();  // 刷新推荐数据
+            fetchPets();              // 刷新卡片显示
+        } else {
+            alert('保存失败');
+        }
+    } catch (e) {
+        alert('保存失败: ' + e.message);
+    }
+}
+
 // ---- 初始化 ----
 async function init() {
     await fetchConfigs();
+    await fetchReleaseData();
     fetchPets();
     fetchRefreshTime();
 }
 window.setGender = setGender;
+window.openSpeciesConfig = openSpeciesConfig;
+
+// ---- 品种配置弹窗事件绑定 ----
+document.getElementById('configSpeciesBtn').addEventListener('click', () => {
+    // 打开全局配置页面
+    window.location.href = 'release.html';
+});
+document.getElementById('closeSpeciesModalBtn').addEventListener('click', closeSpeciesConfigModal);
+document.getElementById('cancelSpeciesConfigBtn').addEventListener('click', closeSpeciesConfigModal);
+document.getElementById('saveSpeciesConfigBtn').addEventListener('click', saveSpeciesConfig);
+document.getElementById('speciesConfigModal').addEventListener('click', function(e) {
+    if (e.target === this) closeSpeciesConfigModal();
+});
+
 init();
