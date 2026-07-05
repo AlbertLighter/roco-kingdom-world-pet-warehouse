@@ -243,6 +243,16 @@ def init_db():
     ]
     cursor.executemany("INSERT OR REPLACE INTO egg_group_mapping (group_id, group_name) VALUES (?, ?)", egg_group_mapping)
 
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS species_preferences (
+        base_id INTEGER PRIMARY KEY,
+        preferred_nature_id INTEGER DEFAULT 0,
+        keep_count INTEGER DEFAULT 1,
+        updated_at TEXT DEFAULT (datetime('now', 'localtime')),
+        FOREIGN KEY (base_id) REFERENCES pet_base_info(id)
+    )
+    """)
+
     conn.commit()
     conn.close()
     print("数据库已初始化（表已就绪）")
@@ -558,6 +568,253 @@ _STAT_COLS = {
     "apDefense": "apDefense_talent",
     "speed": "speed_talent"
 }
+
+# ---- 放生推荐评分引擎常量 ----
+TALENT_SKILL_RIDE = 402          # 同乘
+TALENT_SKILL_SHARE = 1001        # 爱分享
+TALENT_SKILL_MERCY = 50001       # 慈悲为怀
+MUTATION_KEEP = {1, 8, 9}        # 异色/炫彩/异色炫彩，无条件保留
+SPEED_NATURES = {7, 21, 22, 23, 24, 25}  # 加速度的性格 ID
+
+
+def compute_pet_score(pet: dict, preferred_nature_id: int = 0) -> float:
+    """
+    计算精灵个体价值评分 (0~100)，分数越低越建议放生。
+
+    评分维度：
+      - 天赋分 (0~40): 六项天赋值总和 / 186 * 40
+      - 天赋等级分 (0~15): 普通=0, 良好=5, 优秀=10, 极品=15
+      - 体型分 (0~15): 身高体重在该品种范围内的百分位均值 * 15
+      - 性格分 (0~15): 匹配偏好=15, 未指定=7.5, 不匹配=5
+      - 特长加分 (0~15): 有特长=10, 慈悲为怀=15, 无=0
+    """
+    # 1. 天赋分 (0~40)
+    total_talent = sum(pet.get(f"{s}_talent", 0) for s in _STAT_COLS)
+    talent_score = min(40, total_talent / 186 * 40)
+
+    # 2. 天赋等级分 (0~15)
+    rank_map = {1: 0, 2: 5, 3: 10, 4: 15}
+    rank_score = rank_map.get(pet.get("talent_rank", 1), 0)
+
+    # 3. 体型分 (0~15): 复用 _get_size_score 的百分位逻辑
+    size_pct = _get_size_score(pet)
+    size_score = size_pct * 15
+
+    # 4. 性格分 (0~15)
+    nature_id = pet.get("nature", 0)
+    if preferred_nature_id == 0:
+        nature_score = 7.5
+    elif nature_id == preferred_nature_id:
+        nature_score = 15
+    else:
+        nature_score = 5
+
+    # 5. 特长加分 (0~15)
+    talent_skill = pet.get("talent_skill", 0)
+    if talent_skill == TALENT_SKILL_MERCY:
+        skill_bonus = 15
+    elif talent_skill in (TALENT_SKILL_RIDE, TALENT_SKILL_SHARE):
+        skill_bonus = 10
+    else:
+        skill_bonus = 0
+
+    score = talent_score + rank_score + size_score + nature_score + skill_bonus
+    return round(min(100, score), 1)
+
+
+def rank_ride_pets(ride_pets: list) -> list:
+    """
+    对同乘精灵按保留优先级排序（降序）。
+
+    排序依据：
+      1. speed_talent 天赋值 (×3 权重)
+      2. 是否加速度性格 (加分 10)
+      3. talent_rank 等级 (×2 权重)
+      4. 体型微小加成
+    """
+    for p in ride_pets:
+        speed_t = p.get("speed_talent", 0)
+        nature_bonus = 10 if p.get("nature", 0) in SPEED_NATURES else 0
+        rank_bonus = {1: 0, 2: 2, 3: 4, 4: 6}.get(p.get("talent_rank", 1), 0)
+        size = (p.get("height", 0) or 0) + (p.get("weight", 0) or 0) / 1000
+        p["_ride_score"] = speed_t * 3 + nature_bonus + rank_bonus + size / 10000
+    return sorted(ride_pets, key=lambda p: p["_ride_score"], reverse=True)
+
+
+def compute_species_recommendations(
+    all_pets: list,
+    base_info: dict,
+    preferred_nature_id: int = 0,
+    keep_count: int = 1
+) -> dict:
+    """
+    对一个品种内的所有精灵计算放生推荐。
+
+    决策顺序：
+      1. mutation IN (1,8,9) → 无条件保留
+      2. 慈悲为怀 → 全部保留
+      3. 同乘 → 选最优 1 只保留
+      4. 爱分享 → 选最优 1 只保留
+      5. 普通精灵按评分排序，保留前 keep_count 只
+      6. 其余标记为建议放生
+
+    返回: {
+        "total_count": int,
+        "keep_count": int,
+        "recommended_count": int,
+        "kept_serials": [int, ...],
+        "recommended_serials": [int, ...],
+        "pets": [{serial_num, score, is_recommended, is_kept, reasons}, ...]
+    }
+    """
+    if not all_pets:
+        return {
+            "total_count": 0, "keep_count": 0, "recommended_count": 0,
+            "kept_serials": [], "recommended_serials": [], "pets": []
+        }
+
+    kept_serials = set()
+
+    # --- 步骤 1: mutation 无条件保留 ---
+    mutation_keep = [p for p in all_pets if p.get("mutation", 0) in MUTATION_KEEP]
+    for p in mutation_keep:
+        kept_serials.add(p["serial_num"])
+
+    # --- 步骤 2: 慈悲为怀全部保留 ---
+    mercy_pets = [p for p in all_pets if p.get("talent_skill", 0) == TALENT_SKILL_MERCY]
+    for p in mercy_pets:
+        kept_serials.add(p["serial_num"])
+
+    # --- 步骤 3: 同乘优选 ---
+    ride_pets = [
+        p for p in all_pets
+        if p.get("talent_skill", 0) == TALENT_SKILL_RIDE
+        and p["serial_num"] not in kept_serials
+    ]
+    if ride_pets:
+        ranked_rides = rank_ride_pets(ride_pets)
+        kept_serials.add(ranked_rides[0]["serial_num"])
+
+    # --- 步骤 4: 爱分享优选 ---
+    share_pets = [
+        p for p in all_pets
+        if p.get("talent_skill", 0) == TALENT_SKILL_SHARE
+        and p["serial_num"] not in kept_serials
+    ]
+    if share_pets:
+        ranked_shares = sorted(
+            share_pets,
+            key=lambda p: sum(p.get(f"{s}_talent", 0) for s in _STAT_COLS),
+            reverse=True
+        )
+        kept_serials.add(ranked_shares[0]["serial_num"])
+
+    # --- 步骤 5: 常规评分排序 ---
+    normal_pets = [p for p in all_pets if p["serial_num"] not in kept_serials]
+    scored_pets = []
+    for p in normal_pets:
+        score = compute_pet_score(p, preferred_nature_id)
+        reasons = _compute_release_reasons(p, preferred_nature_id, all_pets)
+        scored_pets.append({
+            "serial_num": p["serial_num"],
+            "score": score,
+            "reasons": reasons,
+        })
+    scored_pets.sort(key=lambda x: x["score"], reverse=True)
+
+    # 保留评分最高的 keep_count 只
+    for sp in scored_pets[:keep_count]:
+        kept_serials.add(sp["serial_num"])
+
+    # --- 步骤 6: 确定推荐放生集 ---
+    result_pets = []
+    recommended_serials = []
+    for p in all_pets:
+        sn = p["serial_num"]
+        if sn in kept_serials:
+            result_pets.append({
+                "serial_num": sn,
+                "score": next(
+                    (sp["score"] for sp in scored_pets if sp["serial_num"] == sn),
+                    compute_pet_score(p, preferred_nature_id)
+                ),
+                "is_recommended": False,
+                "is_kept": True,
+                "reasons": [],
+            })
+        else:
+            reasons = next(
+                (sp["reasons"] for sp in scored_pets if sp["serial_num"] == sn),
+                ["综合评分较低"]
+            )
+            result_pets.append({
+                "serial_num": sn,
+                "score": next(
+                    (sp["score"] for sp in scored_pets if sp["serial_num"] == sn),
+                    compute_pet_score(p, preferred_nature_id)
+                ),
+                "is_recommended": True,
+                "is_kept": False,
+                "reasons": reasons,
+            })
+            recommended_serials.append(sn)
+
+    return {
+        "total_count": len(all_pets),
+        "keep_count": len(kept_serials),
+        "recommended_count": len(recommended_serials),
+        "kept_serials": sorted(kept_serials),
+        "recommended_serials": sorted(recommended_serials),
+        "pets": result_pets,
+    }
+
+
+_RELEASE_REASON_TEMPLATES = {
+    "mutation_keep": "异色/炫彩变异",
+    "mercy_keep": "特长：慈悲为怀",
+    "ride_kept_best": "同乘优选保留",
+    "ride_has_better": "同乘特长，但有更好的同乘个体",
+    "share_kept_best": "爱分享优选保留",
+    "share_has_better": "爱分享特长，但有更好的爱分享个体",
+    "no_talent_low": "无特长，天赋总和较低",
+    "beyond_quota": "已超出该品种最少保留数量",
+    "low_score": "综合评分较低",
+}
+
+
+def _compute_release_reasons(pet: dict, preferred_nature_id: int, species_pets: list) -> list:
+    """计算一只精灵被推荐放生的理由文案。"""
+    reasons = []
+    talent_skill = pet.get("talent_skill", 0)
+
+    if talent_skill == TALENT_SKILL_RIDE:
+        reasons.append(_RELEASE_REASON_TEMPLATES["ride_has_better"])
+    elif talent_skill == TALENT_SKILL_SHARE:
+        reasons.append(_RELEASE_REASON_TEMPLATES["share_has_better"])
+    elif talent_skill == 0:
+        total_t = sum(pet.get(f"{s}_talent", 0) for s in _STAT_COLS)
+        if total_t < 50:
+            reasons.append(_RELEASE_REASON_TEMPLATES["no_talent_low"])
+
+    if preferred_nature_id != 0 and pet.get("nature", 0) != preferred_nature_id:
+        reasons.append("性格与该品种偏好不匹配")
+
+    if not reasons:
+        reasons.append(_RELEASE_REASON_TEMPLATES["beyond_quota"])
+
+    return reasons
+
+
+_KNOWN_TALENT_SKILL_NAMES = None
+
+
+def _get_talent_skill_name(talent_skill_id: int) -> str:
+    """根据特长 ID 获取中文名称（懒加载配置映射）。"""
+    global _KNOWN_TALENT_SKILL_NAMES
+    if _KNOWN_TALENT_SKILL_NAMES is None:
+        raw = get_talent_skill_map()
+        _KNOWN_TALENT_SKILL_NAMES = {k: v["name"] for k, v in raw.items()}
+    return _KNOWN_TALENT_SKILL_NAMES.get(talent_skill_id, "")
 
 
 def _get_size_score(pet: dict) -> float:
@@ -1136,6 +1393,292 @@ def get_refresh_time():
     if row:
         return {"refresh_time": row[0]}
     return {"refresh_time": None}
+
+
+# ---- 放生推荐 API ----
+
+@app.get("/api/release_recommendations")
+def get_release_recommendations(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=5000),
+    min_score: Optional[float] = Query(None),
+    species_id: Optional[int] = Query(None)
+):
+    """
+    获取放生推荐列表。
+
+    实时计算每个品种内精灵的评分，按品种分组返回推荐放生的精灵。
+    决策顺序：mutation变异保留 → 慈悲为怀保留 → 同乘优选 → 爱分享优选 → 常规评分排序。
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # 1. 加载用户的品种偏好配置
+    cursor.execute("SELECT * FROM species_preferences")
+    prefs_rows = cursor.fetchall()
+    prefs = {}
+    for row in prefs_rows:
+        prefs[row["base_id"]] = {
+            "preferred_nature_id": row["preferred_nature_id"],
+            "keep_count": row["keep_count"],
+        }
+
+    # 2. 获取所有活跃精灵，按 base_id 分组
+    cursor.execute("""
+        SELECT i.*,
+               b.name as base_name, b.description as base_description,
+               b.familyId as base_familyId, b.egg_groups as base_egg_groups,
+               b.egg_group_int as base_egg_group_int,
+               b.evolutionStage as base_evolutionStage,
+               b.evolutionId as base_evolutionId,
+               b.height_high as base_height_high, b.height_low as base_height_low,
+               b.weight_high as base_weight_high, b.weight_low as base_weight_low,
+               n.name as nature_name, n.plus_stat as nature_plus, n.minus_stat as nature_minus
+        FROM pet_instances i
+        JOIN pet_base_info b ON i.base_id = b.objId
+        LEFT JOIN pet_natures n ON i.nature = n.id
+        WHERE i.is_active = 1
+        ORDER BY b.name, i.serial_num
+    """)
+    all_rows = [dict(r) for r in cursor.fetchall()]
+
+    # 3. 按进化链分组（同一家族不同形态放一起）
+    species_groups = {}
+    for r in all_rows:
+        bid = r["base_id"]
+        if species_id is not None and bid != species_id:
+            continue
+        # 用 evolutionId 作为家族分组 key，空数组则回退到 base_id
+        evo_raw = r.get("base_evolutionId", "[]") or "[]"
+        family_key = evo_raw if evo_raw != "[]" else str(bid)
+        if family_key not in species_groups:
+            species_groups[family_key] = {
+                "base_id": bid,
+                "species_name": r["base_name"],
+                "base_info": {
+                    "height_low": r["base_height_low"],
+                    "height_high": r["base_height_high"],
+                    "weight_low": r["base_weight_low"],
+                    "weight_high": r["base_weight_high"],
+                },
+                "pets": [],
+                "_member_stages": {},  # stage -> {base_id, name}
+            }
+        g = species_groups[family_key]
+        stage = r.get("base_evolutionStage", 0) or 0
+        if stage not in g["_member_stages"]:
+            g["_member_stages"][stage] = {"base_id": bid, "name": r["base_name"]}
+        g["pets"].append(r)
+
+    # 修正组名：取 stage 最小的形态名称作为代表
+    for g in species_groups.values():
+        if g["_member_stages"]:
+            min_stage = min(g["_member_stages"].keys())
+            rep = g["_member_stages"][min_stage]
+            g["base_id"] = rep["base_id"]
+            g["species_name"] = rep["name"]
+        # 生成 member_species 列表供前端展示
+        g["member_species"] = sorted(
+            [{"base_id": v["base_id"], "name": v["name"], "stage": k}
+             for k, v in g["_member_stages"].items()],
+            key=lambda x: x["stage"]
+        )
+        del g["_member_stages"]
+
+    # 4. 对每个品种执行评分
+    all_species_groups = []
+    total_recommended = 0
+    total_active = len(all_rows)
+    kept_mercy = kept_ride = kept_share = 0
+
+    for family_key, group in species_groups.items():
+        # 查找家族偏好：遍历族内所有 base_id，优先用 stage-1 的配置
+        pref = {"preferred_nature_id": 0, "keep_count": 1}
+        for member in sorted(group["member_species"], key=lambda x: x["stage"]):
+            member_pref = prefs.get(member["base_id"])
+            if member_pref:
+                pref = member_pref
+                break
+
+        result = compute_species_recommendations(
+            group["pets"],
+            group["base_info"],
+            preferred_nature_id=pref["preferred_nature_id"],
+            keep_count=pref["keep_count"],
+        )
+
+        # 统计特长保留数
+        for p in group["pets"]:
+            if p["serial_num"] in result["kept_serials"]:
+                ts = p.get("talent_skill", 0)
+                if ts == TALENT_SKILL_MERCY:
+                    kept_mercy += 1
+                elif ts == TALENT_SKILL_RIDE:
+                    kept_ride += 1
+                elif ts == TALENT_SKILL_SHARE:
+                    kept_share += 1
+
+        total_recommended += result["recommended_count"]
+
+        # 组装返回数据（含宠物详细信息）
+        pet_details = []
+        for rp in result["pets"]:
+            raw = next(p for p in group["pets"] if p["serial_num"] == rp["serial_num"])
+            pet_details.append({
+                "serial_num": rp["serial_num"],
+                "name": raw["name"],
+                "level": raw["level"],
+                "gender": raw["gender"],
+                "talent_rank": raw["talent_rank"],
+                "nature": raw["nature"],
+                "nature_name": raw.get("nature_name"),
+                "nature_plus": raw.get("nature_plus"),
+                "nature_minus": raw.get("nature_minus"),
+                "talent_skill": raw["talent_skill"],
+                "talent_skill_name": _get_talent_skill_name(raw["talent_skill"]),
+                "mutation": raw.get("mutation", 0),
+                "total_talent": sum(raw.get(f"{s}_talent", 0) for s in _STAT_COLS),
+                **{f"{s}_talent": raw.get(f"{s}_talent", 0) for s in _STAT_COLS},
+                "height": raw.get("height"),
+                "weight": raw.get("weight"),
+                "score": rp["score"],
+                "reasons": rp["reasons"],
+                "is_recommended": rp["is_recommended"],
+                "is_kept": rp["is_kept"],
+            })
+
+        all_species_groups.append({
+            "base_id": group["base_id"],
+            "species_name": group["species_name"],
+            "member_species": group["member_species"],
+            "total_count": result["total_count"],
+            "keep_count": result["keep_count"],
+            "recommended_count": result["recommended_count"],
+            "recommended_serials": result["recommended_serials"],
+            "kept_serials": result["kept_serials"],
+            "config": {
+                "preferred_nature_id": pref["preferred_nature_id"],
+                "keep_count": pref["keep_count"],
+            },
+            "pets": pet_details,
+        })
+
+    conn.close()
+
+    # 5. 分页
+    total_species = len(all_species_groups)
+    start = (page - 1) * page_size
+    end = start + page_size
+    page_groups = all_species_groups[start:end]
+
+    return {
+        "total": total_recommended,
+        "page": page,
+        "page_size": page_size,
+        "total_species": total_species,
+        "summary": {
+            "total_active_pets": total_active,
+            "total_recommended": total_recommended,
+            "kept_by_mercy": kept_mercy,
+            "kept_by_ride": kept_ride,
+            "kept_by_share": kept_share,
+        },
+        "species_groups": page_groups,
+    }
+
+
+@app.get("/api/release_summary")
+def get_release_summary():
+    """获取放生推荐摘要（首页概览用）"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT COUNT(*) FROM pet_instances WHERE is_active = 1")
+    total_active = cursor.fetchone()[0] or 0
+
+    cursor.execute("""
+        SELECT i.serial_num, i.talent_skill, i.talent_rank, i.mutation
+        FROM pet_instances i
+        WHERE i.is_active = 1
+    """)
+    all_pets = cursor.fetchall()
+    conn.close()
+
+    rough_recommended = sum(
+        1 for p in all_pets
+        if p["talent_skill"] == 0 and p["talent_rank"] == 1 and p["mutation"] not in MUTATION_KEEP
+    )
+
+    total_active = max(total_active, 1)
+    return {
+        "total_active": total_active,
+        "recommended_release": rough_recommended,
+        "releaseable_percent": round(rough_recommended / total_active * 100, 1),
+    }
+
+
+@app.get("/api/species_preferences")
+def get_species_preferences():
+    """获取所有已配置的品种偏好。"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT sp.*, b.name as species_name,
+               n.name as preferred_nature_name
+        FROM species_preferences sp
+        LEFT JOIN pet_base_info b ON sp.base_id = b.objId
+        LEFT JOIN pet_natures n ON sp.preferred_nature_id = n.id
+        ORDER BY b.name
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    return {
+        "preferences": [
+            {
+                "base_id": r["base_id"],
+                "species_name": r["species_name"],
+                "preferred_nature_id": r["preferred_nature_id"],
+                "preferred_nature_name": r["preferred_nature_name"] or "",
+                "keep_count": r["keep_count"],
+                "updated_at": r["updated_at"],
+            }
+            for r in rows
+        ]
+    }
+
+
+@app.put("/api/species_preferences")
+def update_species_preferences(data: dict = Body(...)):
+    """批量保存品种偏好配置。
+
+    Body: {preferences: [{base_id, preferred_nature_id, keep_count}, ...]}
+    """
+    prefs = data.get("preferences", [])
+    if not prefs:
+        raise HTTPException(status_code=400, detail="缺少 preferences 参数")
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    updated = 0
+    for p in prefs:
+        base_id = p.get("base_id")
+        nature_id = p.get("preferred_nature_id", 0)
+        keep = p.get("keep_count", 1)
+        if not base_id:
+            continue
+        cursor.execute("""
+            INSERT INTO species_preferences (base_id, preferred_nature_id, keep_count, updated_at)
+            VALUES (?, ?, ?, datetime('now','localtime'))
+            ON CONFLICT(base_id) DO UPDATE SET
+                preferred_nature_id = excluded.preferred_nature_id,
+                keep_count = excluded.keep_count,
+                updated_at = datetime('now','localtime')
+        """, (base_id, nature_id, keep))
+        updated += 1
+
+    conn.commit()
+    conn.close()
+    return {"msg": "ok", "updated": updated}
 
 
 # 挂载前端静态文件
