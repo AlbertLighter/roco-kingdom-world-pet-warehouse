@@ -674,16 +674,99 @@ async function init() {
 window.setGender = setGender;
 window.openSpeciesConfig = openSpeciesConfig;
 
+// ---- 全局品种配置弹窗 ----
+function openGlobalConfig() {
+    const modal = document.getElementById('globalConfigModal');
+    const tbody = document.getElementById('globalConfigTableBody');
+    modal.style.display = 'flex';
+    tbody.innerHTML = '<tr><td colspan="3">加载中...</td></tr>';
+
+    fetch('/api/species_preferences')
+        .then(r => r.json())
+        .then(data => renderGlobalConfigTable(data.preferences))
+        .catch(e => { tbody.innerHTML = `<tr><td colspan="3" style="color:#e74c3c;">加载失败: ${e.message}</td></tr>`; });
+}
+
+function closeGlobalConfig() {
+    document.getElementById('globalConfigModal').style.display = 'none';
+}
+
+function renderGlobalConfigTable(preferences) {
+    const tbody = document.getElementById('globalConfigTableBody');
+    if (!preferences || preferences.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="3" style="color:#95a5a6;">暂无配置</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = preferences.map(p => {
+        const natureIds = p.preferred_nature_ids || [];
+        const options = [];
+        for (let i = 1; i <= 30; i++) {
+            const selected = natureIds.includes(i) ? 'selected' : '';
+            options.push(`<option value="${i}" ${selected}>${getNatureName(i)}</option>`);
+        }
+        return `
+            <tr>
+                <td>${escapeHtml(p.species_name)}</td>
+                <td>
+                    <select class="config-nature" data-base-id="${p.base_id}" multiple size="4">
+                        ${options.join('')}
+                    </select>
+                </td>
+                <td>
+                    <input type="number" class="config-keep" data-base-id="${p.base_id}" value="${p.keep_count}" min="1" max="99" style="width:60px;padding:4px;">
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+async function saveGlobalConfig() {
+    const natureSelects = document.querySelectorAll('.config-nature');
+    const keepInputs = document.querySelectorAll('.config-keep');
+
+    const prefs = [];
+    natureSelects.forEach(sel => {
+        const baseId = parseInt(sel.dataset.baseId);
+        const natureIds = Array.from(sel.selectedOptions).map(o => parseInt(o.value));
+        const keepInput = document.querySelector(`.config-keep[data-base-id="${baseId}"]`);
+        const keepCount = keepInput ? parseInt(keepInput.value) || 3 : 3;
+        prefs.push({ base_id: baseId, preferred_nature_ids: natureIds, keep_count: keepCount });
+    });
+
+    try {
+        const res = await fetch('/api/species_preferences', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ preferences: prefs })
+        });
+        if (res.ok) {
+            closeGlobalConfig();
+            await fetchReleaseData();
+            fetchPets();
+        } else {
+            alert('保存失败');
+        }
+    } catch (e) {
+        alert('保存失败: ' + e.message);
+    }
+}
+
 // ---- 品种配置弹窗事件绑定 ----
-document.getElementById('configSpeciesBtn').addEventListener('click', () => {
-    // 打开全局配置页面
-    window.location.href = 'release.html';
-});
+document.getElementById('configSpeciesBtn').addEventListener('click', openGlobalConfig);
 document.getElementById('closeSpeciesModalBtn').addEventListener('click', closeSpeciesConfigModal);
 document.getElementById('cancelSpeciesConfigBtn').addEventListener('click', closeSpeciesConfigModal);
 document.getElementById('saveSpeciesConfigBtn').addEventListener('click', saveSpeciesConfig);
 document.getElementById('speciesConfigModal').addEventListener('click', function(e) {
     if (e.target === this) closeSpeciesConfigModal();
+});
+
+// ---- 全局配置弹窗事件绑定 ----
+document.getElementById('closeGlobalConfigBtn').addEventListener('click', closeGlobalConfig);
+document.getElementById('cancelGlobalConfigBtn').addEventListener('click', closeGlobalConfig);
+document.getElementById('saveGlobalConfigBtn').addEventListener('click', saveGlobalConfig);
+document.getElementById('globalConfigModal').addEventListener('click', function(e) {
+    if (e.target === this) closeGlobalConfig();
 });
 
 init();
