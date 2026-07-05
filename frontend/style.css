@@ -672,6 +672,44 @@ main {
     font-size: 0.9em;
 }
 
+/* ---- 性格标签点选 ---- */
+.nature-tag-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    max-width: 360px;
+}
+
+.nature-tag {
+    display: inline-block;
+    padding: 3px 8px;
+    font-size: 0.78em;
+    border: 1px solid #bdc3c7;
+    border-radius: 4px;
+    cursor: pointer;
+    user-select: none;
+    transition: all 0.15s;
+    background: #fff;
+    color: #2c3e50;
+}
+
+.nature-tag:hover {
+    border-color: #3498db;
+    background: #ebf5fb;
+}
+
+.nature-tag.selected {
+    border-color: #27ae60;
+    background: #e8f8e8;
+    color: #1e8449;
+    font-weight: bold;
+}
+
+/* 全局配置表格中的标签网格宽度自适应 */
+.config-table .nature-tag-grid {
+    max-width: 420px;
+}
+
 /* ---- 表单组 ---- */
 .form-group {
     margin-bottom: 12px;

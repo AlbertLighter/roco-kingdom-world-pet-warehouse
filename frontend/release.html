@@ -65,7 +65,7 @@
                     <thead>
                         <tr>
                             <th>品种名称</th>
-                            <th>偏好性格<br><small>Ctrl多选</small></th>
+                            <th>偏好性格<br><small>点击选</small></th>
                             <th>最少保留</th>
                         </tr>
                     </thead>
@@ -89,10 +89,8 @@
             </div>
             <div class="modal-body">
                 <div class="form-group">
-                    <label>偏好性格 (按住 Ctrl 多选):</label>
-                    <select id="speciesNatureSelect" multiple size="8">
-                        <option value="0">不指定</option>
-                    </select>
+                    <label>偏好性格 (点击选取):</label>
+                    <div id="speciesNatureContainer" class="nature-tag-grid"></div>
                 </div>
                 <div class="form-group">
                     <label>最少保留 (不含特长):</label>

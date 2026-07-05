@@ -603,26 +603,38 @@ function getSpeciesConfig(baseId) {
     return group ? group.config : null;
 }
 
+// ---- 性格标签辅助 ----
+function buildNatureTags(containerId, selectedIds) {
+    const container = document.getElementById(containerId);
+    container.innerHTML = '';
+    for (let i = 1; i <= 30; i++) {
+        const tag = document.createElement('span');
+        tag.className = 'nature-tag' + (selectedIds.includes(i) ? ' selected' : '');
+        tag.textContent = getNatureName(i);
+        tag.dataset.id = i;
+        tag.addEventListener('click', () => {
+            tag.classList.toggle('selected');
+        });
+        container.appendChild(tag);
+    }
+}
+
+function getSelectedNatureIds(containerId) {
+    const container = document.getElementById(containerId);
+    return Array.from(container.querySelectorAll('.nature-tag.selected')).map(
+        t => parseInt(t.dataset.id)
+    );
+}
+
 function openSpeciesConfig(baseId, speciesName) {
     currentConfigBaseId = baseId;
     document.getElementById('speciesConfigTitle').textContent = `配置 - ${speciesName}`;
     document.getElementById('speciesKeepCount').value = 3;
 
-    const select = document.getElementById('speciesNatureSelect');
-    select.innerHTML = '';
-    for (let i = 1; i <= 30; i++) {
-        const opt = document.createElement('option');
-        opt.value = i;
-        opt.textContent = getNatureName(i);
-        select.appendChild(opt);
-    }
-
     const config = getSpeciesConfig(baseId);
+    const ids = (config && config.preferred_nature_ids) || [];
+    buildNatureTags('speciesNatureContainer', ids);
     if (config) {
-        const ids = config.preferred_nature_ids || [];
-        for (const opt of select.options) {
-            opt.selected = ids.includes(parseInt(opt.value));
-        }
         document.getElementById('speciesKeepCount').value = config.keep_count || 3;
     }
 
@@ -636,8 +648,7 @@ function closeSpeciesConfigModal() {
 
 async function saveSpeciesConfig() {
     if (!currentConfigBaseId) return;
-    const select = document.getElementById('speciesNatureSelect');
-    const natureIds = Array.from(select.selectedOptions).map(o => parseInt(o.value));
+    const natureIds = getSelectedNatureIds('speciesNatureContainer');
     const keepCount = parseInt(document.getElementById('speciesKeepCount').value) || 3;
 
     try {
@@ -700,18 +711,18 @@ function renderGlobalConfigTable(preferences) {
 
     tbody.innerHTML = preferences.map(p => {
         const natureIds = p.preferred_nature_ids || [];
-        const options = [];
+        const tags = [];
         for (let i = 1; i <= 30; i++) {
-            const selected = natureIds.includes(i) ? 'selected' : '';
-            options.push(`<option value="${i}" ${selected}>${getNatureName(i)}</option>`);
+            const sel = natureIds.includes(i) ? ' selected' : '';
+            tags.push(`<span class="nature-tag${sel}" data-id="${i}">${getNatureName(i)}</span>`);
         }
         return `
             <tr>
                 <td>${escapeHtml(p.species_name)}</td>
                 <td>
-                    <select class="config-nature" data-base-id="${p.base_id}" multiple size="4">
-                        ${options.join('')}
-                    </select>
+                    <div class="nature-tag-grid" data-base-id="${p.base_id}">
+                        ${tags.join('')}
+                    </div>
                 </td>
                 <td>
                     <input type="number" class="config-keep" data-base-id="${p.base_id}" value="${p.keep_count}" min="1" max="99" style="width:60px;padding:4px;">
@@ -719,16 +730,25 @@ function renderGlobalConfigTable(preferences) {
             </tr>
         `;
     }).join('');
+
+    // 绑定 tag 点击事件
+    tbody.querySelectorAll('.nature-tag').forEach(tag => {
+        tag.addEventListener('click', () => {
+            tag.classList.toggle('selected');
+        });
+    });
 }
 
 async function saveGlobalConfig() {
-    const natureSelects = document.querySelectorAll('.config-nature');
+    const natureSelects = document.querySelectorAll('.nature-tag-grid');
     const keepInputs = document.querySelectorAll('.config-keep');
 
     const prefs = [];
-    natureSelects.forEach(sel => {
-        const baseId = parseInt(sel.dataset.baseId);
-        const natureIds = Array.from(sel.selectedOptions).map(o => parseInt(o.value));
+    natureSelects.forEach(grid => {
+        const baseId = parseInt(grid.dataset.baseId);
+        const natureIds = Array.from(grid.querySelectorAll('.nature-tag.selected')).map(
+            t => parseInt(t.dataset.id)
+        );
         const keepInput = document.querySelector(`.config-keep[data-base-id="${baseId}"]`);
         const keepCount = keepInput ? parseInt(keepInput.value) || 3 : 3;
         prefs.push({ base_id: baseId, preferred_nature_ids: natureIds, keep_count: keepCount });
