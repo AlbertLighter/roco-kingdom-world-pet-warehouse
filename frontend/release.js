@@ -295,11 +295,11 @@ function renderPetCard(pet, speciesName) {
 function openSpeciesConfig(baseId, speciesName) {
     currentConfigSpeciesId = baseId;
     document.getElementById('speciesConfigTitle').textContent = `配置 - ${speciesName}`;
-    document.getElementById('speciesKeepCount').value = 1;
+    document.getElementById('speciesKeepCount').value = 3;
 
-    // 填充性格下拉
+    // 填充性格多选
     const select = document.getElementById('speciesNatureSelect');
-    select.innerHTML = '<option value="0">不指定</option>';
+    select.innerHTML = '';
     for (let i = 1; i <= 30; i++) {
         const opt = document.createElement('option');
         opt.value = i;
@@ -307,11 +307,14 @@ function openSpeciesConfig(baseId, speciesName) {
         select.appendChild(opt);
     }
 
-    // 加载当前配置
+    // 加载当前配置（多选）
     const speciesGroup = allSpeciesData.species_groups.find(g => g.base_id == baseId);
     if (speciesGroup && speciesGroup.config) {
-        select.value = speciesGroup.config.preferred_nature_id || 0;
-        document.getElementById('speciesKeepCount').value = speciesGroup.config.keep_count || 1;
+        const ids = speciesGroup.config.preferred_nature_ids || [];
+        for (const opt of select.options) {
+            opt.selected = ids.includes(parseInt(opt.value));
+        }
+        document.getElementById('speciesKeepCount').value = speciesGroup.config.keep_count || 3;
     }
 
     document.getElementById('speciesConfigModal').style.display = 'flex';
@@ -324,8 +327,9 @@ function closeSpeciesConfigModal() {
 
 async function saveSingleConfig() {
     if (!currentConfigSpeciesId) return;
-    const natureId = parseInt(document.getElementById('speciesNatureSelect').value) || 0;
-    const keepCount = parseInt(document.getElementById('speciesKeepCount').value) || 1;
+    const select = document.getElementById('speciesNatureSelect');
+    const natureIds = Array.from(select.selectedOptions).map(o => parseInt(o.value));
+    const keepCount = parseInt(document.getElementById('speciesKeepCount').value) || 3;
 
     try {
         const res = await fetch('/api/species_preferences', {
@@ -334,7 +338,7 @@ async function saveSingleConfig() {
             body: JSON.stringify({
                 preferences: [{
                     base_id: currentConfigSpeciesId,
-                    preferred_nature_id: natureId,
+                    preferred_nature_ids: natureIds,
                     keep_count: keepCount
                 }]
             })
@@ -375,17 +379,18 @@ function renderConfigTable(preferences) {
     }
 
     tbody.innerHTML = preferences.map(p => {
-        const natureOptions = ['<option value="0">不指定</option>'];
+        const natureIds = p.preferred_nature_ids || [];
+        const options = [];
         for (let i = 1; i <= 30; i++) {
-            const selected = i === p.preferred_nature_id ? 'selected' : '';
-            natureOptions.push(`<option value="${i}" ${selected}>${getNatureName(i)}</option>`);
+            const selected = natureIds.includes(i) ? 'selected' : '';
+            options.push(`<option value="${i}" ${selected}>${getNatureName(i)}</option>`);
         }
         return `
             <tr>
                 <td>${escapeHtml(p.species_name)}</td>
                 <td>
-                    <select class="config-nature" data-base-id="${p.base_id}">
-                        ${natureOptions.join('')}
+                    <select class="config-nature" data-base-id="${p.base_id}" multiple size="4">
+                        ${options.join('')}
                     </select>
                 </td>
                 <td>
@@ -407,10 +412,10 @@ async function saveAllConfigs() {
     const prefs = [];
     natureSelects.forEach(sel => {
         const baseId = parseInt(sel.dataset.baseId);
-        const natureId = parseInt(sel.value) || 0;
+        const natureIds = Array.from(sel.selectedOptions).map(o => parseInt(o.value));
         const keepInput = document.querySelector(`.config-keep[data-base-id="${baseId}"]`);
-        const keepCount = keepInput ? parseInt(keepInput.value) || 1 : 1;
-        prefs.push({ base_id: baseId, preferred_nature_id: natureId, keep_count: keepCount });
+        const keepCount = keepInput ? parseInt(keepInput.value) || 3 : 3;
+        prefs.push({ base_id: baseId, preferred_nature_ids: natureIds, keep_count: keepCount });
     });
 
     try {

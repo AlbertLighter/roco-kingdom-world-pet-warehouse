@@ -247,11 +247,22 @@ def init_db():
     CREATE TABLE IF NOT EXISTS species_preferences (
         base_id INTEGER PRIMARY KEY,
         preferred_nature_id INTEGER DEFAULT 0,
-        keep_count INTEGER DEFAULT 1,
+        keep_count INTEGER DEFAULT 3,
         updated_at TEXT DEFAULT (datetime('now', 'localtime')),
         FOREIGN KEY (base_id) REFERENCES pet_base_info(id)
     )
     """)
+
+    # ---- 向后兼容迁移：preferred_nature_ids ----
+    cursor.execute("PRAGMA table_info(species_preferences)")
+    existing_cols = {row[1] for row in cursor.fetchall()}
+    if "preferred_nature_ids" not in existing_cols:
+        cursor.execute("ALTER TABLE species_preferences ADD COLUMN preferred_nature_ids TEXT DEFAULT '[]'")
+        cursor.execute("""
+            UPDATE species_preferences
+            SET preferred_nature_ids = CASE WHEN preferred_nature_id > 0
+                THEN '[' || preferred_nature_id || ']' ELSE '[]' END
+        """)
 
     conn.commit()
     conn.close()
@@ -577,7 +588,7 @@ MUTATION_KEEP = {1, 8, 9}        # 异色/炫彩/异色炫彩，无条件保留
 SPEED_NATURES = {7, 21, 22, 23, 24, 25}  # 加速度的性格 ID
 
 
-def compute_pet_score(pet: dict, preferred_nature_id: int = 0) -> float:
+def compute_pet_score(pet: dict, preferred_nature_ids: list = None) -> float:
     """
     计算精灵个体价值评分 (0~100)，分数越低越建议放生。
 
@@ -585,9 +596,11 @@ def compute_pet_score(pet: dict, preferred_nature_id: int = 0) -> float:
       - 天赋分 (0~40): 六项天赋值总和 / 186 * 40
       - 天赋等级分 (0~15): 普通=0, 良好=5, 优秀=10, 极品=15
       - 体型分 (0~15): 身高体重在该品种范围内的百分位均值 * 15
-      - 性格分 (0~15): 匹配偏好=15, 未指定=7.5, 不匹配=5
+      - 性格分 (0~15): 匹配任一偏好=15, 未指定=7.5, 不匹配=5
       - 特长加分 (0~15): 有特长=10, 慈悲为怀=15, 无=0
     """
+    if preferred_nature_ids is None:
+        preferred_nature_ids = []
     # 1. 天赋分 (0~40)
     total_talent = sum(pet.get(f"{s}_talent", 0) for s in _STAT_COLS)
     talent_score = min(40, total_talent / 186 * 40)
@@ -600,11 +613,11 @@ def compute_pet_score(pet: dict, preferred_nature_id: int = 0) -> float:
     size_pct = _get_size_score(pet)
     size_score = size_pct * 15
 
-    # 4. 性格分 (0~15)
+    # 4. 性格分 (0~15): 匹配任一偏好性格即得满分
     nature_id = pet.get("nature", 0)
-    if preferred_nature_id == 0:
+    if not preferred_nature_ids:
         nature_score = 7.5
-    elif nature_id == preferred_nature_id:
+    elif nature_id in preferred_nature_ids:
         nature_score = 15
     else:
         nature_score = 5
@@ -644,8 +657,8 @@ def rank_ride_pets(ride_pets: list) -> list:
 def compute_species_recommendations(
     all_pets: list,
     base_info: dict,
-    preferred_nature_id: int = 0,
-    keep_count: int = 1
+    preferred_nature_ids: list = None,
+    keep_count: int = 3
 ) -> dict:
     """
     对一个品种内的所有精灵计算放生推荐。
@@ -655,8 +668,9 @@ def compute_species_recommendations(
       2. 慈悲为怀 → 全部保留
       3. 同乘 → 选最优 1 只保留
       4. 爱分享 → 选最优 1 只保留
-      5. 普通精灵按评分排序，保留前 keep_count 只
-      6. 其余标记为建议放生
+      5. 母方体型最优 → 各家族保留体型最大的母方 1 只
+      6. 普通精灵按评分排序，保留前 keep_count 只
+      7. 其余标记为建议放生
 
     返回: {
         "total_count": int,
@@ -709,12 +723,23 @@ def compute_species_recommendations(
         )
         kept_serials.add(ranked_shares[0]["serial_num"])
 
-    # --- 步骤 5: 常规评分排序 ---
+    # --- 步骤 5: 母方体型最优保留（用于繁育）---
+    female_pets = [
+        p for p in all_pets
+        if p.get("gender", 0) == 2
+        and p["serial_num"] not in kept_serials
+    ]
+    if female_pets:
+        # 按体型大小（身高+体重）降序，取最大的保留
+        female_pets.sort(key=lambda p: (p.get("height", 0) or 0) + (p.get("weight", 0) or 0), reverse=True)
+        kept_serials.add(female_pets[0]["serial_num"])
+
+    # --- 步骤 6: 常规评分排序 ---
     normal_pets = [p for p in all_pets if p["serial_num"] not in kept_serials]
     scored_pets = []
     for p in normal_pets:
-        score = compute_pet_score(p, preferred_nature_id)
-        reasons = _compute_release_reasons(p, preferred_nature_id, all_pets)
+        score = compute_pet_score(p, preferred_nature_ids)
+        reasons = _compute_release_reasons(p, preferred_nature_ids, all_pets)
         scored_pets.append({
             "serial_num": p["serial_num"],
             "score": score,
@@ -726,7 +751,7 @@ def compute_species_recommendations(
     for sp in scored_pets[:keep_count]:
         kept_serials.add(sp["serial_num"])
 
-    # --- 步骤 6: 确定推荐放生集 ---
+    # --- 步骤 7: 确定推荐放生集 ---
     result_pets = []
     recommended_serials = []
     for p in all_pets:
@@ -736,7 +761,7 @@ def compute_species_recommendations(
                 "serial_num": sn,
                 "score": next(
                     (sp["score"] for sp in scored_pets if sp["serial_num"] == sn),
-                    compute_pet_score(p, preferred_nature_id)
+                    compute_pet_score(p, preferred_nature_ids)
                 ),
                 "is_recommended": False,
                 "is_kept": True,
@@ -751,7 +776,7 @@ def compute_species_recommendations(
                 "serial_num": sn,
                 "score": next(
                     (sp["score"] for sp in scored_pets if sp["serial_num"] == sn),
-                    compute_pet_score(p, preferred_nature_id)
+                    compute_pet_score(p, preferred_nature_ids)
                 ),
                 "is_recommended": True,
                 "is_kept": False,
@@ -782,7 +807,7 @@ _RELEASE_REASON_TEMPLATES = {
 }
 
 
-def _compute_release_reasons(pet: dict, preferred_nature_id: int, species_pets: list) -> list:
+def _compute_release_reasons(pet: dict, preferred_nature_ids: list, species_pets: list) -> list:
     """计算一只精灵被推荐放生的理由文案。"""
     reasons = []
     talent_skill = pet.get("talent_skill", 0)
@@ -796,7 +821,7 @@ def _compute_release_reasons(pet: dict, preferred_nature_id: int, species_pets: 
         if total_t < 50:
             reasons.append(_RELEASE_REASON_TEMPLATES["no_talent_low"])
 
-    if preferred_nature_id != 0 and pet.get("nature", 0) != preferred_nature_id:
+    if preferred_nature_ids and pet.get("nature", 0) not in preferred_nature_ids:
         reasons.append("性格与该品种偏好不匹配")
 
     if not reasons:
@@ -1418,8 +1443,9 @@ def get_release_recommendations(
     prefs_rows = cursor.fetchall()
     prefs = {}
     for row in prefs_rows:
+        raw_ids = row.get("preferred_nature_ids", "[]") or "[]"
         prefs[row["base_id"]] = {
-            "preferred_nature_id": row["preferred_nature_id"],
+            "preferred_nature_ids": json.loads(raw_ids),
             "keep_count": row["keep_count"],
         }
 
@@ -1493,7 +1519,7 @@ def get_release_recommendations(
 
     for family_key, group in species_groups.items():
         # 查找家族偏好：遍历族内所有 base_id，优先用 stage-1 的配置
-        pref = {"preferred_nature_id": 0, "keep_count": 1}
+        pref = {"preferred_nature_ids": [], "keep_count": 3}
         for member in sorted(group["member_species"], key=lambda x: x["stage"]):
             member_pref = prefs.get(member["base_id"])
             if member_pref:
@@ -1503,7 +1529,7 @@ def get_release_recommendations(
         result = compute_species_recommendations(
             group["pets"],
             group["base_info"],
-            preferred_nature_id=pref["preferred_nature_id"],
+            preferred_nature_ids=pref["preferred_nature_ids"],
             keep_count=pref["keep_count"],
         )
 
@@ -1557,7 +1583,7 @@ def get_release_recommendations(
             "recommended_serials": result["recommended_serials"],
             "kept_serials": result["kept_serials"],
             "config": {
-                "preferred_nature_id": pref["preferred_nature_id"],
+                "preferred_nature_ids": pref["preferred_nature_ids"],
                 "keep_count": pref["keep_count"],
             },
             "pets": pet_details,
@@ -1623,11 +1649,9 @@ def get_species_preferences():
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT sp.*, b.name as species_name,
-               n.name as preferred_nature_name
+        SELECT sp.*, b.name as species_name
         FROM species_preferences sp
         LEFT JOIN pet_base_info b ON sp.base_id = b.objId
-        LEFT JOIN pet_natures n ON sp.preferred_nature_id = n.id
         ORDER BY b.name
     """)
     rows = cursor.fetchall()
@@ -1637,8 +1661,7 @@ def get_species_preferences():
             {
                 "base_id": r["base_id"],
                 "species_name": r["species_name"],
-                "preferred_nature_id": r["preferred_nature_id"],
-                "preferred_nature_name": r["preferred_nature_name"] or "",
+                "preferred_nature_ids": json.loads(r.get("preferred_nature_ids", "[]") or "[]"),
                 "keep_count": r["keep_count"],
                 "updated_at": r["updated_at"],
             }
@@ -1651,7 +1674,7 @@ def get_species_preferences():
 def update_species_preferences(data: dict = Body(...)):
     """批量保存品种偏好配置。
 
-    Body: {preferences: [{base_id, preferred_nature_id, keep_count}, ...]}
+    Body: {preferences: [{base_id, preferred_nature_ids, keep_count}, ...]}
     """
     prefs = data.get("preferences", [])
     if not prefs:
@@ -1662,18 +1685,19 @@ def update_species_preferences(data: dict = Body(...)):
     updated = 0
     for p in prefs:
         base_id = p.get("base_id")
-        nature_id = p.get("preferred_nature_id", 0)
-        keep = p.get("keep_count", 1)
+        nature_ids = p.get("preferred_nature_ids", [])
+        keep = p.get("keep_count", 3)
         if not base_id:
             continue
+        nature_ids_json = json.dumps(nature_ids, ensure_ascii=False)
         cursor.execute("""
-            INSERT INTO species_preferences (base_id, preferred_nature_id, keep_count, updated_at)
+            INSERT INTO species_preferences (base_id, preferred_nature_ids, keep_count, updated_at)
             VALUES (?, ?, ?, datetime('now','localtime'))
             ON CONFLICT(base_id) DO UPDATE SET
-                preferred_nature_id = excluded.preferred_nature_id,
+                preferred_nature_ids = excluded.preferred_nature_ids,
                 keep_count = excluded.keep_count,
                 updated_at = datetime('now','localtime')
-        """, (base_id, nature_id, keep))
+        """, (base_id, nature_ids_json, keep))
         updated += 1
 
     conn.commit()
