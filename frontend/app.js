@@ -342,7 +342,7 @@ function createPetCard(pet) {
             <div class="pet-header">
                 <div class="pet-header-left">
                     ${ballUrl ? `<img class="ball-icon" src="${ballUrl}" alt="" onerror="this.style.display='none'">` : ''}
-                    <span class="pet-name">${escapedName} <span class="${genderIconClass}">${genderLabel}</span></span>
+                    <span class="pet-name" onclick='copyPetName(${JSON.stringify(pet.name)})' style="cursor:pointer;" title="点击复制名称">${escapedName} <span class="${genderIconClass}">${genderLabel}</span></span>
                     <span class="pet-level">Lv.${pet.level}</span>
                 </div>
                 <span class="pet-sn">#${pet.serial_num}</span>
@@ -706,6 +706,19 @@ async function init() {
 }
 window.setGender = setGender;
 window.openSpeciesConfig = openSpeciesConfig;
+
+// ---- 点击复制名称（取 & 前部分） ----
+function copyPetName(name) {
+    const text = name.split('&')[0].trim();
+    navigator.clipboard.writeText(text).catch(() => {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+    });
+}
 
 // ---- 全局品种配置弹窗 ----
 function openGlobalConfig() {
