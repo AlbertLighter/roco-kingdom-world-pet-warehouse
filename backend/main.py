@@ -1443,7 +1443,8 @@ def get_release_recommendations(
     prefs_rows = cursor.fetchall()
     prefs = {}
     for row in prefs_rows:
-        raw_ids = row.get("preferred_nature_ids", "[]") or "[]"
+        row_dict = dict(row)
+        raw_ids = row_dict.get("preferred_nature_ids", "[]") or "[]"
         prefs[row["base_id"]] = {
             "preferred_nature_ids": json.loads(raw_ids),
             "keep_count": row["keep_count"],
@@ -1661,7 +1662,7 @@ def get_species_preferences():
             {
                 "base_id": r["base_id"],
                 "species_name": r["species_name"],
-                "preferred_nature_ids": json.loads(r.get("preferred_nature_ids", "[]") or "[]"),
+                "preferred_nature_ids": json.loads((dict(r).get("preferred_nature_ids", "[]") or "[]")),
                 "keep_count": r["keep_count"],
                 "updated_at": r["updated_at"],
             }
