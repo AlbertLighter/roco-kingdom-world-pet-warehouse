@@ -379,7 +379,12 @@ function createPetCard(pet) {
             <div class="gender-setter">
                 <button onclick="setGender(${pet.serial_num}, 1)">设为♂</button>
                 <button onclick="setGender(${pet.serial_num}, 2)">设为♀</button>
-                <button onclick="openSpeciesConfig(${pet.base_id}, '${escapeHtml(pet.base_name || pet.name)}')" style="margin-left:6px;padding:4px 8px;background:#f39c12;color:white;border:none;border-radius:3px;cursor:pointer;font-size:0.78em;">⚙️</button>
+                ${(() => {
+                    const cfg = getSpeciesConfig(pet.base_id);
+                    const hasConfig = cfg && cfg.configured === true;
+                    const bg = hasConfig ? '#f39c12' : '#bdc3c7';
+                    return `<button onclick="openSpeciesConfig(${pet.base_id}, '${escapeHtml(pet.base_name || pet.name)}')" style="margin-left:6px;padding:4px 8px;background:${bg};color:white;border:none;border-radius:3px;cursor:pointer;font-size:0.78em;" title="${hasConfig ? '已配置' : '未配置，点击设置'}">⚙️</button>`;
+                })()}
             </div>
         </div>
     `;

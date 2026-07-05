@@ -1546,10 +1546,12 @@ def get_release_recommendations(
     for family_key, group in species_groups.items():
         # 查找家族偏好：遍历族内所有 base_id，优先用 stage-1 的配置
         pref = {"preferred_nature_ids": [], "keep_count": 3}
+        configured = False
         for member in sorted(group["member_species"], key=lambda x: x["stage"]):
             member_pref = prefs.get(member["base_id"])
             if member_pref:
                 pref = member_pref
+                configured = True
                 break
 
         result = compute_species_recommendations(
@@ -1611,6 +1613,7 @@ def get_release_recommendations(
             "config": {
                 "preferred_nature_ids": pref["preferred_nature_ids"],
                 "keep_count": pref["keep_count"],
+                "configured": configured,
             },
             "pets": pet_details,
         })
