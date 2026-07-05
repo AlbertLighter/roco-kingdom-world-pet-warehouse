@@ -65,6 +65,15 @@ async function loadNatureMap() {
             21: "胆小", 22: "急躁", 23: "开朗", 24: "莽撞", 25: "热情",
             26: "沉默", 27: "忧郁", 28: "平和", 29: "粗心", 30: "踏实"
         };
+        // 性格按加成属性分组（同属性排一列，每种属性恰好 5 个）
+        window.NATURE_GROUPS = [
+            { label: '生命', ids: [26, 27, 28, 29, 30] },
+            { label: '物攻', ids: [1, 2, 3, 4, 5] },
+            { label: '物防', ids: [6, 7, 8, 9, 10] },
+            { label: '魔攻', ids: [11, 12, 13, 14, 15] },
+            { label: '魔防', ids: [16, 17, 18, 19, 20] },
+            { label: '速度', ids: [21, 22, 23, 24, 25] },
+        ];
     } catch (e) {
         console.error('加载性格映射失败:', e);
     }
@@ -305,16 +314,26 @@ function openSpeciesConfig(baseId, speciesName) {
         document.getElementById('speciesKeepCount').value = speciesGroup.config.keep_count || 3;
     }
 
-    // 填充性格标签
+    // 填充性格标签（按属性分组）
     const container = document.getElementById('speciesNatureContainer');
     container.innerHTML = '';
-    for (let i = 1; i <= 30; i++) {
-        const tag = document.createElement('span');
-        tag.className = 'nature-tag' + (ids.includes(i) ? ' selected' : '');
-        tag.textContent = getNatureName(i);
-        tag.dataset.id = i;
-        tag.addEventListener('click', () => tag.classList.toggle('selected'));
-        container.appendChild(tag);
+    const groups = window.NATURE_GROUPS || [];
+    for (const group of groups) {
+        const col = document.createElement('div');
+        col.className = 'nature-group';
+        const label = document.createElement('div');
+        label.className = 'nature-group-label';
+        label.textContent = group.label;
+        col.appendChild(label);
+        for (const id of group.ids) {
+            const tag = document.createElement('span');
+            tag.className = 'nature-tag' + (ids.includes(id) ? ' selected' : '');
+            tag.textContent = getNatureName(id);
+            tag.dataset.id = id;
+            tag.addEventListener('click', () => tag.classList.toggle('selected'));
+            col.appendChild(tag);
+        }
+        container.appendChild(col);
     }
 
     document.getElementById('speciesConfigModal').style.display = 'flex';
@@ -380,17 +399,20 @@ function renderConfigTable(preferences) {
 
     tbody.innerHTML = preferences.map(p => {
         const natureIds = p.preferred_nature_ids || [];
-        const tags = [];
-        for (let i = 1; i <= 30; i++) {
-            const sel = natureIds.includes(i) ? ' selected' : '';
-            tags.push(`<span class="nature-tag${sel}" data-id="${i}">${getNatureName(i)}</span>`);
-        }
+        const groups = window.NATURE_GROUPS || [];
+        const groupsHtml = groups.map(g => {
+            const tags = g.ids.map(id => {
+                const sel = natureIds.includes(id) ? ' selected' : '';
+                return `<span class="nature-tag${sel}" data-id="${id}">${getNatureName(id)}</span>`;
+            }).join('');
+            return `<div class="nature-group"><div class="nature-group-label">${g.label}</div>${tags}</div>`;
+        }).join('');
         return `
             <tr>
                 <td>${escapeHtml(p.species_name)}</td>
                 <td>
                     <div class="nature-tag-grid" data-base-id="${p.base_id}">
-                        ${tags.join('')}
+                        ${groupsHtml}
                     </div>
                 </td>
                 <td>
