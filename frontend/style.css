@@ -162,6 +162,12 @@ main {
     cursor: default;
 }
 
+.badge-talent-skill {
+    background: #fef9e7;
+    color: #d4ac0d;
+    border: 1px solid #f9e79f;
+}
+
 /* ---- 内容区 ---- */
 .pet-content {
     display: flex;

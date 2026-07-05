@@ -5,6 +5,7 @@ const pageSize = 30;
 let bloodlineMap = {};
 let typeMap = {};
 let medalMap = {};
+let talentSkillMap = {};
 
 function escapeHtml(str) {
     if (!str) return '';
@@ -28,14 +29,16 @@ function escapeHtml(str) {
 
 async function fetchConfigs() {
     try {
-        const [blRes, tpRes, mdRes] = await Promise.all([
+        const [blRes, tpRes, mdRes, tsRes] = await Promise.all([
             fetch('/api/config/bloodlines'),
             fetch('/api/config/types'),
-            fetch('/api/config/medals')
+            fetch('/api/config/medals'),
+            fetch('/api/config/talent_skills')
         ]);
         bloodlineMap = await blRes.json();
         typeMap = await tpRes.json();
         medalMap = await mdRes.json();
+        talentSkillMap = await tsRes.json();
     } catch (e) {
         console.warn('Failed to load config maps:', e);
     }
@@ -159,6 +162,13 @@ function renderRuler(label, value, min, max, divisor, unit) {
     `;
 }
 
+// ---- 获取特长名称 ----
+function getTalentSkillName(id) {
+    if (!id) return null;
+    const ts = talentSkillMap[id];
+    return ts ? ts.name : null;
+}
+
 // ---- 获取血脉名称 ----
 function getBloodlineName(id) {
     const bl = bloodlineMap[id];
@@ -274,6 +284,7 @@ function createPetCard(pet) {
                 <span class="badge badge-talent-${pet.talent_rank}">${talentRankLabel}</span>
                 ${bloodlineName ? `<span class="badge badge-bloodline">🩸 ${escapeHtml(bloodlineName)}</span>` : ''}
                 ${typeNames.map(t => `<span class="badge badge-type">${escapeHtml(t)}</span>`).join('')}
+                ${getTalentSkillName(pet.talent_skill) ? `<span class="badge badge-talent-skill">⭐ ${escapeHtml(getTalentSkillName(pet.talent_skill))}</span>` : ''}
                 ${pet.mutation ? `<span class="badge" style="background:#fce4ec;color:#c62828;display:inline-flex;align-items:center;gap:3px;"><img src="https://game.gtimg.cn/images/rocom/rocodata/MutationDiffType/${pet.mutation}.png" style="height:16px;width:auto;" onerror="this.style.display='none'"> 异色</span>` : ''}
             </div>
 

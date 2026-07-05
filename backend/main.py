@@ -53,6 +53,13 @@ def get_medal_map():
         return {}
     return {item["id"]: {"name": item["name"], "quality": item.get("quality", 1), "desc": item.get("desc", "")} for item in data}
 
+def get_talent_skill_map():
+    """特长映射 (PET_TALENT_CONF) ID → { name, desc }"""
+    data = _load_json("PET_TALENT_CONF.json")
+    if not data:
+        return {}
+    return {item["id"]: {"name": item["name"], "desc": item.get("desc", "")} for item in data}
+
 def get_nature_map():
     """性格映射，包含 buff/debuff 对应的属性下标 (0-5 对应 hp/adAttack/adDefense/apAttack/apDefense/speed)"""
     data = _load_json("PET_BLOOD_CONF.json")
@@ -386,6 +393,11 @@ def get_types():
 def get_medals():
     """获取奖牌配置映射"""
     return get_medal_map()
+
+@app.get("/api/config/talent_skills")
+def get_talent_skills():
+    """获取特长配置映射"""
+    return get_talent_skill_map()
 
 @app.get("/api/pets")
 def get_pets(
