@@ -613,9 +613,14 @@ async function checkBreedingAfterSync() {
 
 // ---- 品种配置弹窗 ----
 function getSpeciesConfig(baseId) {
-    // 从 speciesPrefsList 中查找配置
-    const group = speciesPrefsList.find(g => g.base_id == baseId);
-    return group ? group.config : null;
+    // 从 speciesPrefsList 中查找配置（按组 base_id，或按 member_species 列表匹配）
+    for (const group of speciesPrefsList) {
+        if (group.base_id == baseId) return group.config;
+        if (group.member_species && group.member_species.some(m => m.base_id == baseId)) {
+            return group.config;
+        }
+    }
+    return null;
 }
 
 // ---- 性格标签辅助 ----

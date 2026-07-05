@@ -602,6 +602,7 @@ _STAT_COLS = {
 }
 
 # ---- 放生推荐评分引擎常量 ----
+TALENT_SKILL_DASH = 401          # 疾行
 TALENT_SKILL_RIDE = 402          # 同乘
 TALENT_SKILL_SHARE = 1001        # 爱分享
 TALENT_SKILL_MERCY = 50001       # 慈悲为怀
@@ -614,41 +615,41 @@ def compute_pet_score(pet: dict, preferred_nature_ids: list = None) -> float:
     计算精灵个体价值评分 (0~100)，分数越低越建议放生。
 
     评分维度：
-      - 天赋分 (0~40): 六项天赋值总和 / 186 * 40
-      - 天赋等级分 (0~15): 普通=0, 良好=5, 优秀=10, 极品=15
-      - 体型分 (0~15): 身高体重在该品种范围内的百分位均值 * 15
-      - 性格分 (0~15): 匹配任一偏好=15, 未指定=7.5, 不匹配=5
-      - 特长加分 (0~15): 有特长=10, 慈悲为怀=15, 无=0
+      - 天赋分 (0~10): 六项天赋值总和 / 186 * 10
+      - 天赋等级分 (0~20): 普通=0, 良好=7, 优秀=13, 极品=20
+      - 体型分 (0~30): 身高体重在该品种范围内的百分位均值 * 30
+      - 性格分 (0~30): 匹配任一偏好=30, 未指定=15, 不匹配=10
+      - 特长加分 (0~10): 有特长=7, 慈悲为怀=10, 无=0
     """
     if preferred_nature_ids is None:
         preferred_nature_ids = []
-    # 1. 天赋分 (0~40)
+    # 1. 天赋分 (0~10)
     total_talent = sum(pet.get(f"{s}_talent", 0) for s in _STAT_COLS)
-    talent_score = min(40, total_talent / 186 * 40)
+    talent_score = min(10, total_talent / 186 * 10)
 
-    # 2. 天赋等级分 (0~15)
-    rank_map = {1: 0, 2: 5, 3: 10, 4: 15}
+    # 2. 天赋等级分 (0~20)
+    rank_map = {1: 0, 2: 7, 3: 13, 4: 20}
     rank_score = rank_map.get(pet.get("talent_rank", 1), 0)
 
-    # 3. 体型分 (0~15): 复用 _get_size_score 的百分位逻辑
+    # 3. 体型分 (0~30): 复用 _get_size_score 的百分位逻辑
     size_pct = _get_size_score(pet)
-    size_score = size_pct * 15
+    size_score = size_pct * 30
 
-    # 4. 性格分 (0~15): 匹配任一偏好性格即得满分
+    # 4. 性格分 (0~30): 匹配任一偏好性格即得满分
     nature_id = pet.get("nature", 0)
     if not preferred_nature_ids:
-        nature_score = 7.5
-    elif nature_id in preferred_nature_ids:
         nature_score = 15
+    elif nature_id in preferred_nature_ids:
+        nature_score = 30
     else:
-        nature_score = 5
+        nature_score = 10
 
-    # 5. 特长加分 (0~15)
+    # 5. 特长加分 (0~10)
     talent_skill = pet.get("talent_skill", 0)
     if talent_skill == TALENT_SKILL_MERCY:
-        skill_bonus = 15
-    elif talent_skill in (TALENT_SKILL_RIDE, TALENT_SKILL_SHARE):
         skill_bonus = 10
+    elif talent_skill in (TALENT_SKILL_RIDE, TALENT_SKILL_SHARE, TALENT_SKILL_DASH):
+        skill_bonus = 7
     else:
         skill_bonus = 0
 
@@ -689,9 +690,10 @@ def compute_species_recommendations(
       2. 慈悲为怀 → 全部保留
       3. 同乘 → 选最优 1 只保留
       4. 爱分享 → 选最优 1 只保留
-      5. 母方体型最优 → 各家族保留体型最大的母方 1 只
-      6. 普通精灵按评分排序，保留前 keep_count 只
-      7. 其余标记为建议放生
+      5. 疾行 → 用同乘排序逻辑，选最优 1 只保留
+      6. 母方体型最优 → 各家族保留体型最大的母方 1 只
+      7. 普通精灵按评分排序，保留前 keep_count 只
+      8. 其余标记为建议放生
 
     返回: {
         "total_count": int,
@@ -744,7 +746,17 @@ def compute_species_recommendations(
         )
         kept_serials.add(ranked_shares[0]["serial_num"])
 
-    # --- 步骤 5: 母方体型最优保留（用于繁育）---
+    # --- 步骤 5: 疾行优选（用同乘排序逻辑，只保留最优 1 只）---
+    dash_pets = [
+        p for p in all_pets
+        if p.get("talent_skill", 0) == TALENT_SKILL_DASH
+        and p["serial_num"] not in kept_serials
+    ]
+    if dash_pets:
+        ranked_dash = rank_ride_pets(dash_pets)
+        kept_serials.add(ranked_dash[0]["serial_num"])
+
+    # --- 步骤 6: 母方体型最优保留（用于繁育）---
     female_pets = [
         p for p in all_pets
         if p.get("gender", 0) == 2
@@ -755,7 +767,7 @@ def compute_species_recommendations(
         female_pets.sort(key=lambda p: (p.get("height", 0) or 0) + (p.get("weight", 0) or 0), reverse=True)
         kept_serials.add(female_pets[0]["serial_num"])
 
-    # --- 步骤 6: 常规评分排序 ---
+    # --- 步骤 7: 常规评分排序 ---
     normal_pets = [p for p in all_pets if p["serial_num"] not in kept_serials]
     scored_pets = []
     for p in normal_pets:
@@ -772,7 +784,7 @@ def compute_species_recommendations(
     for sp in scored_pets[:keep_count]:
         kept_serials.add(sp["serial_num"])
 
-    # --- 步骤 7: 确定推荐放生集 ---
+    # --- 步骤 8: 确定推荐放生集 ---
     result_pets = []
     recommended_serials = []
     for p in all_pets:
@@ -822,6 +834,8 @@ _RELEASE_REASON_TEMPLATES = {
     "ride_has_better": "同乘特长，但有更好的同乘个体",
     "share_kept_best": "爱分享优选保留",
     "share_has_better": "爱分享特长，但有更好的爱分享个体",
+    "dash_kept_best": "疾行优选保留",
+    "dash_has_better": "疾行特长，但有更好的疾行个体",
     "no_talent_low": "无特长，天赋总和较低",
     "beyond_quota": "已超出该品种最少保留数量",
     "low_score": "综合评分较低",
@@ -835,6 +849,8 @@ def _compute_release_reasons(pet: dict, preferred_nature_ids: list, species_pets
 
     if talent_skill == TALENT_SKILL_RIDE:
         reasons.append(_RELEASE_REASON_TEMPLATES["ride_has_better"])
+    elif talent_skill == TALENT_SKILL_DASH:
+        reasons.append(_RELEASE_REASON_TEMPLATES["dash_has_better"])
     elif talent_skill == TALENT_SKILL_SHARE:
         reasons.append(_RELEASE_REASON_TEMPLATES["share_has_better"])
     elif talent_skill == 0:
@@ -1458,7 +1474,7 @@ def get_release_recommendations(
     获取放生推荐列表。
 
     实时计算每个品种内精灵的评分，按品种分组返回推荐放生的精灵。
-    决策顺序：mutation变异保留 → 慈悲为怀保留 → 同乘优选 → 爱分享优选 → 常规评分排序。
+    决策顺序：mutation变异保留 → 慈悲为怀保留 → 同乘优选 → 爱分享优选 → 疾行优选 → 常规评分排序。
     """
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -1541,7 +1557,7 @@ def get_release_recommendations(
     all_species_groups = []
     total_recommended = 0
     total_active = len(all_rows)
-    kept_mercy = kept_ride = kept_share = 0
+    kept_mercy = kept_ride = kept_share = kept_dash = 0
 
     for family_key, group in species_groups.items():
         # 查找家族偏好：遍历族内所有 base_id，优先用 stage-1 的配置
@@ -1571,6 +1587,8 @@ def get_release_recommendations(
                     kept_ride += 1
                 elif ts == TALENT_SKILL_SHARE:
                     kept_share += 1
+                elif ts == TALENT_SKILL_DASH:
+                    kept_dash += 1
 
         total_recommended += result["recommended_count"]
 
@@ -1637,6 +1655,7 @@ def get_release_recommendations(
             "kept_by_mercy": kept_mercy,
             "kept_by_ride": kept_ride,
             "kept_by_share": kept_share,
+            "kept_by_dash": kept_dash,
         },
         "species_groups": page_groups,
     }
