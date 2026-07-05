@@ -25,7 +25,7 @@ DB_PATH = os.path.join(PROJECT_ROOT, "warehouse.db")
 CONF_DIR = os.path.join(PROJECT_ROOT, "roco_kingdom_world_conf")
 
 # 多线程工作线程数
-SYNC_WORKERS = 5
+SYNC_WORKERS = 1  # 串行拉取详情，避免 API 限频
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
