@@ -592,7 +592,7 @@ async function checkBreedingAfterSync() {
             if (hasAny > 0) addSyncLog('✅ 家园生蛋配置已是最优');
         }
     } catch (e) {
-        // 忽略（可能 breeding_slots 表不存在或未同步）
+        console.warn('家园生蛋检测失败:', e);
     }
 }
 

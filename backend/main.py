@@ -31,6 +31,11 @@ _sync_logger.addHandler(_handler)
 
 
 
+
+
+
+
+
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(_BASE_DIR, "..", "warehouse.db")
 CONF_DIR = os.path.join(_BASE_DIR, "..", "roco_kingdom_world_conf")
@@ -43,8 +48,12 @@ def _load_json(filename):
     if not os.path.exists(path):
         return None
     if filename not in _config_cache:
-        with open(path, "r", encoding="utf-8") as f:
-            _config_cache[filename] = json.load(f)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                _config_cache[filename] = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            _sync_logger.error(f"配置加载失败 {filename}: {e}")
+            return None
     return _config_cache[filename]
 
 def get_bloodline_map():
@@ -289,6 +298,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---- 全局异常日志中间件 ----
+@app.middleware("http")
+async def log_unhandled_errors(request, call_next):
+    try:
+        response = await call_next(request)
+        return response
+    except Exception as e:
+        _sync_logger.error(f"未处理的请求异常: {request.method} {request.url.path} - {e}")
+        raise
 
 class BreedCalculator:
     def __init__(self, father_attrs, mother_attrs, king_ball_attr=None):
@@ -544,7 +563,9 @@ def sync_gender_from_export_endpoint():
                 from scripts.sync_gender_from_export import sync_gender_from_export
                 result = sync_gender_from_export(progress_callback=progress_callback)
                 progress_queue.put({"done": True, "result": result})
+                _sync_logger.info(f"性别同步完成：更新 {result.get('updated', 0)} 条，匹配 {result.get('matched', 0)} 条")
             except Exception as e:
+                _sync_logger.error(f"性别同步失败: {e}")
                 progress_queue.put({"done": True, "error": str(e)})
             finally:
                 _gender_sync_lock.release()

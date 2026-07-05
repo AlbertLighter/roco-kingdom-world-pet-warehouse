@@ -17,11 +17,22 @@ import json
 import os
 import sqlite3
 import glob
+import logging
 
 # Resolve paths relative to project root
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _DB_PATH = os.path.join(_PROJECT_ROOT, "warehouse.db")
 _DATA_DIR = os.path.join(_PROJECT_ROOT, "data")
+_LOG_DIR = os.path.join(_PROJECT_ROOT, "logs")
+
+_sync_logger = logging.getLogger("sync")
+# 如果后端已配置 logger，这里不重复添加 handler
+if not _sync_logger.handlers:
+    os.makedirs(_LOG_DIR, exist_ok=True)
+    _handler = logging.FileHandler(os.path.join(_LOG_DIR, "sync.log"), encoding="utf-8", mode="a")
+    _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    _sync_logger.setLevel(logging.INFO)
+    _sync_logger.addHandler(_handler)
 
 
 def _find_export_files():
@@ -81,78 +92,84 @@ def sync_gender_from_export(filepath=None, progress_callback=None):
         else:
             print(message)
 
-    # 1. 确定源文件
-    if filepath:
-        if not os.path.exists(filepath):
-            raise FileNotFoundError(f"文件不存在: {filepath}")
-        source_files = [filepath]
-    else:
-        source_files = _find_export_files()
-        if not source_files:
-            raise FileNotFoundError(
-                f"data/ 目录下未找到 JSON 文件（搜索路径: {_DATA_DIR}）"
-            )
-
-    report(f"找到 {len(source_files)} 个 JSON 文件", 0, 0)
-
-    # 2. 解析所有文件，合并 gid→gender 映射
-    all_gid_gender = {}
-    for sf in source_files:
-        gid_map = _scan_file_for_gender(sf, progress_callback)
-        all_gid_gender.update(gid_map)
-
-    if not all_gid_gender:
-        report("⚠ 未从导出数据中找到任何 ZoneGetPetInfoByPageRsp 响应", 0, 0)
-        return {"updated": 0, "matched": 0, "total_in_db": 0, "source": ";".join(source_files)}
-
-    report(f"共解析到 {len(all_gid_gender)} 个唯一 gid", 0, len(all_gid_gender))
-
-    # 3. 连接数据库，执行更新
-    conn = sqlite3.connect(_DB_PATH)
-    cursor = conn.cursor()
-
-    # 统计数据库中匹配的 serial_num
-    gid_list = list(all_gid_gender.keys())
-    placeholders = ",".join("?" * len(gid_list))
-    cursor.execute(
-        f"SELECT COUNT(*) FROM pet_instances WHERE serial_num IN ({placeholders})",
-        gid_list,
-    )
-    matched = cursor.fetchone()[0]
-    report(f"数据库匹配: {matched}/{len(all_gid_gender)} 个 gid", 0, matched)
-
-    # 按 serial_num 排序逐条更新
-    cursor.execute("SELECT serial_num, gender FROM pet_instances ORDER BY serial_num")
-    rows = cursor.fetchall()
-    total = len(rows)
-    updated = 0
-    checked = 0
-
-    for serial_num, old_gender in rows:
-        if serial_num in all_gid_gender:
-            new_gender = all_gid_gender[serial_num]
-            if old_gender != new_gender:
-                cursor.execute(
-                    "UPDATE pet_instances SET gender = ? WHERE serial_num = ?",
-                    (new_gender, serial_num),
+    try:
+        # 1. 确定源文件
+        if filepath:
+            if not os.path.exists(filepath):
+                raise FileNotFoundError(f"文件不存在: {filepath}")
+            source_files = [filepath]
+        else:
+            source_files = _find_export_files()
+            if not source_files:
+                raise FileNotFoundError(
+                    f"data/ 目录下未找到 JSON 文件（搜索路径: {_DATA_DIR}）"
                 )
-                updated += 1
-            checked += 1
-            if checked % 100 == 0:
-                report(f"处理中... {checked}/{total}", checked, total)
 
-    conn.commit()
-    conn.close()
+        report(f"找到 {len(source_files)} 个 JSON 文件", 0, 0)
 
-    source_name = os.path.basename(source_files[0]) if len(source_files) == 1 else f"{len(source_files)} 个文件"
-    report(f"完成！更新 {updated} 条记录（匹配 {matched}/{total}）", total, total)
+        # 2. 解析所有文件，合并 gid→gender 映射
+        all_gid_gender = {}
+        for sf in source_files:
+            gid_map = _scan_file_for_gender(sf, progress_callback)
+            all_gid_gender.update(gid_map)
 
-    return {
-        "updated": updated,
-        "matched": matched,
-        "total_in_db": total,
-        "source": source_name,
-    }
+        if not all_gid_gender:
+            report("⚠ 未从导出数据中找到任何 ZoneGetPetInfoByPageRsp 响应", 0, 0)
+            return {"updated": 0, "matched": 0, "total_in_db": 0, "source": ";".join(source_files)}
+
+        report(f"共解析到 {len(all_gid_gender)} 个唯一 gid", 0, len(all_gid_gender))
+
+        # 3. 连接数据库，执行更新
+        conn = sqlite3.connect(_DB_PATH)
+        cursor = conn.cursor()
+
+        # 统计数据库中匹配的 serial_num
+        gid_list = list(all_gid_gender.keys())
+        placeholders = ",".join("?" * len(gid_list))
+        cursor.execute(
+            f"SELECT COUNT(*) FROM pet_instances WHERE serial_num IN ({placeholders})",
+            gid_list,
+        )
+        matched = cursor.fetchone()[0]
+        report(f"数据库匹配: {matched}/{len(all_gid_gender)} 个 gid", 0, matched)
+
+        # 按 serial_num 排序逐条更新
+        cursor.execute("SELECT serial_num, gender FROM pet_instances ORDER BY serial_num")
+        rows = cursor.fetchall()
+        total = len(rows)
+        updated = 0
+        checked = 0
+
+        for serial_num, old_gender in rows:
+            if serial_num in all_gid_gender:
+                new_gender = all_gid_gender[serial_num]
+                if old_gender != new_gender:
+                    cursor.execute(
+                        "UPDATE pet_instances SET gender = ? WHERE serial_num = ?",
+                        (new_gender, serial_num),
+                    )
+                    updated += 1
+                checked += 1
+                if checked % 100 == 0:
+                    report(f"处理中... {checked}/{total}", checked, total)
+
+        conn.commit()
+        conn.close()
+
+        source_name = os.path.basename(source_files[0]) if len(source_files) == 1 else f"{len(source_files)} 个文件"
+        report(f"完成！更新 {updated} 条记录（匹配 {matched}/{total}）", total, total)
+
+        return {
+            "updated": updated,
+            "matched": matched,
+            "total_in_db": total,
+            "source": source_name,
+        }
+    except FileNotFoundError:
+        raise
+    except Exception as e:
+        _sync_logger.error(f"性别同步失败: {e}", exc_info=True)
+        raise
 
 
 if __name__ == "__main__":

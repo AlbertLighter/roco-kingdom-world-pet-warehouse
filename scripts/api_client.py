@@ -1,9 +1,13 @@
 import os
 import json
 import requests
+import logging
 from urllib3.exceptions import InsecureRequestWarning
 from urllib.parse import quote
 from dotenv import load_dotenv
+
+# 同步日志（复用后端 logger 配置）
+_api_logger = logging.getLogger("sync")
 
 REQUESTS_VERIFY = os.getenv("REQUESTS_VERIFY", "true").lower() == "true"
 TIMEOUT = (10, 30)  # (connect, read) seconds
@@ -35,7 +39,7 @@ def direct_login():
     """Refreshes the AUTHORIZATION_TOKEN using ACCESS_TOKEN and REFRESH_TOKEN."""
     global AUTHORIZATION_TOKEN
     if not ACCESS_TOKEN or not REFRESH_TOKEN:
-        print("Missing ACCESS_TOKEN or REFRESH_TOKEN in environment.")
+        _api_logger.warning("缺少 ACCESS_TOKEN 或 REFRESH_TOKEN")
         return False
         
     payload = {
@@ -51,20 +55,20 @@ def direct_login():
     }
     
     try:
-        print("Attempting to refresh login session...")
+        _api_logger.info("正在刷新登录会话...")
         response = requests.post(DIRECT_LOGIN_URL, json=payload, headers=headers, proxies=PROXIES, verify=REQUESTS_VERIFY, timeout=TIMEOUT)
         response.raise_for_status()
         res_json = response.json()
         if res_json.get("code") == 0:
             new_token = res_json["data"]["fd_token"]
             AUTHORIZATION_TOKEN = new_token
-            print("Login session refreshed successfully.")
+            _api_logger.info("登录会话刷新成功")
             return True
         else:
-            print(f"Login refresh failed: {res_json.get('msg')}")
+            _api_logger.warning(f"登录刷新失败: {res_json.get('msg')}")
             return False
     except Exception as e:
-        print(f"Login refresh request failed: {e}")
+        _api_logger.error(f"登录刷新请求失败: {e}")
         return False
 
 def gateway_request(req_path, req_param, req_type="POST", retry=True):
@@ -96,18 +100,18 @@ def gateway_request(req_path, req_param, req_type="POST", retry=True):
         
         # Handle expired session
         if res_json.get("code") == 4001 and retry:
-            print("Login session expired. Attempting auto-refresh...")
+            _api_logger.warning("登录会话过期，正在自动刷新...")
             if direct_login():
                 return gateway_request(req_path, req_param, req_type=req_type, retry=False)
                 
         if res_json.get("code") != 0:
-            print(f"Error in API {req_path}: {res_json.get('msg')}")
+            _api_logger.warning(f"API {req_path} 错误: {res_json.get('msg')}")
             if response.status_code != 200:
-                print(f"HTTP Status: {response.status_code}")
+                _api_logger.warning(f"HTTP 状态码: {response.status_code}")
             return None
         return res_json.get("data")
     except Exception as e:
-        print(f"Request failed: {e}")
+        _api_logger.error(f"请求失败 {req_path}: {e}")
         return None
 
 def fetch_user_info():
@@ -129,5 +133,5 @@ def fetch_base_info(baseid):
         response.raise_for_status()
         return response.json()
     except Exception as e:
-        print(f"Failed to fetch base info for {baseid}: {e}")
+        _api_logger.error(f"获取 {baseid} 基础信息失败: {e}")
         return None
