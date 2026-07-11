@@ -338,15 +338,19 @@ function createPetCard(pet) {
     let releaseReasons = '';
     if (releaseInfo) {
         if (releaseInfo.is_recommended) {
-            releaseBadge = `<span class="release-badge rec">❌ 建议放生</span>`;
+            releaseBadge = `<span class="release-badge rec">❌ 建议放生 (${releaseInfo.score})</span>`;
             releaseClass = 'card-recommended';
             if (releaseInfo.reasons && releaseInfo.reasons.length > 0) {
                 const reasonsText = escapeHtml(releaseInfo.reasons.join('；'));
                 releaseReasons = `<div style="font-size:0.72em;color:#e74c3c;margin-top:2px;" title="${reasonsText}">${reasonsText}</div>`;
             }
         } else if (releaseInfo.is_kept) {
-            releaseBadge = `<span class="release-badge kept">✅ 保留</span>`;
+            releaseBadge = `<span class="release-badge kept">✅ 保留 (${releaseInfo.score})</span>`;
             releaseClass = 'card-kept';
+            if (releaseInfo.reasons && releaseInfo.reasons.length > 0) {
+                const reasonsText = escapeHtml(releaseInfo.reasons.join('；'));
+                releaseReasons = `<div style="font-size:0.72em;color:#27ae60;margin-top:2px;" title="${reasonsText}">${reasonsText}</div>`;
+            }
         }
     }
 
