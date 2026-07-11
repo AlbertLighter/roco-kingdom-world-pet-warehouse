@@ -508,7 +508,7 @@ def get_pets(
     sort_clauses = {
         "time_desc": "i.serial_num DESC",
         "time_asc": "i.serial_num ASC",
-        "base_id": "COALESCE(b.handbook_id, 999999) ASC, i.talent_rank DESC, i.serial_num ASC",
+        "base_id": "COALESCE(b.handbook_id, 999999) ASC, i.talent_rank DESC, i.level DESC, i.serial_num ASC",
     }
     order_by = sort_clauses.get(sort, "i.serial_num DESC")
 
