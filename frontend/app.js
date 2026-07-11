@@ -465,6 +465,18 @@ function goToPage() {
 pageInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') goToPage(); });
 pageInput.addEventListener('blur', goToPage);
 
+// 键盘左右翻页（输入框中不触发）
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft') {
+        if (document.activeElement?.tagName === 'INPUT') return;
+        if (currentPage > 1) { currentPage--; fetchPets(); }
+    } else if (e.key === 'ArrowRight') {
+        if (document.activeElement?.tagName === 'INPUT') return;
+        const totalPages = Math.ceil(parseInt(totalCountEl.textContent) / pageSize);
+        if (currentPage < totalPages) { currentPage++; fetchPets(); }
+    }
+});
+
 searchBtn.addEventListener('click', () => { currentPage = 1; fetchPets(); });
 prevBtn.addEventListener('click', () => { if (currentPage > 1) { currentPage--; fetchPets(); } });
 nextBtn.addEventListener('click', () => { currentPage++; fetchPets(); });
