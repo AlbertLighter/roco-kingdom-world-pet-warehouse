@@ -485,7 +485,7 @@ def get_pets(
     name: Optional[str] = None,
     base_id: Optional[int] = None,
     include_inactive: bool = Query(False),
-    sort: str = Query("time_desc", regex="^(time_desc|time_asc|base_id)$")
+    sort: str = Query("time_desc", pattern="^(time_desc|time_asc|base_id)$")
 ):
     conn = get_db_connection()
     cursor = conn.cursor()
