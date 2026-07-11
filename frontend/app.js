@@ -90,6 +90,7 @@ const savedSort = localStorage.getItem('warehouse_sort');
 if (savedSort && [...sortSelect.options].some(o => o.value === savedSort)) {
     sortSelect.value = savedSort;
 }
+const hideMutationCheck = document.getElementById('hideMutationCheck');
 
 async function fetchReleaseData() {
     try {
@@ -126,7 +127,9 @@ async function fetchRefreshTime() {
 async function fetchPets() {
     const name = searchInput.value.trim().slice(0, 100);
     const sort = sortSelect.value;
-    const url = `/api/pets?page=${currentPage}&pageSize=${pageSize}&sort=${encodeURIComponent(sort)}&name=${encodeURIComponent(name)}`;
+    const hideMutation = hideMutationCheck.checked ? 'true' : '';
+    let url = `/api/pets?page=${currentPage}&pageSize=${pageSize}&sort=${encodeURIComponent(sort)}&name=${encodeURIComponent(name)}`;
+    if (hideMutation) url += `&hide_mutation=true`;
     try {
         const response = await fetch(url);
         const data = await response.json();
@@ -486,6 +489,7 @@ searchBtn.addEventListener('click', () => { currentPage = 1; fetchPets(); });
 prevBtn.addEventListener('click', () => { if (currentPage > 1) { currentPage--; fetchPets(); } });
 nextBtn.addEventListener('click', () => { currentPage++; fetchPets(); });
 sortSelect.addEventListener('change', () => { localStorage.setItem('warehouse_sort', sortSelect.value); currentPage = 1; fetchPets(); });
+hideMutationCheck.addEventListener('change', () => { currentPage = 1; fetchPets(); });
 
 // ---- 同步逻辑 (不变) ----
 const syncBtn = document.getElementById('syncBtn');

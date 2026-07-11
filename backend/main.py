@@ -435,7 +435,7 @@ class BreedCalculator:
                 total_prob += prob_k * sum_k
             return total_prob
 
-def _build_pet_filter(name, base_id, include_inactive):
+def _build_pet_filter(name, base_id, include_inactive, hide_mutation=False):
     """Build WHERE clause and params for pet queries. All user values go through ? placeholders."""
     where_parts = []
     params = []
@@ -448,6 +448,8 @@ def _build_pet_filter(name, base_id, include_inactive):
     if base_id is not None:
         where_parts.append("i.base_id = ?")
         params.append(base_id)
+    if hide_mutation:
+        where_parts.append("(i.mutation IS NULL OR i.mutation = 0)")
 
     where_str = " AND ".join(where_parts) if where_parts else "1=1"
     return where_str, params
@@ -485,12 +487,13 @@ def get_pets(
     name: Optional[str] = None,
     base_id: Optional[int] = None,
     include_inactive: bool = Query(False),
-    sort: str = Query("time_desc", pattern="^(time_desc|time_asc|base_id)$")
+    sort: str = Query("time_desc", pattern="^(time_desc|time_asc|base_id)$"),
+    hide_mutation: bool = Query(False)
 ):
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    where_str, params = _build_pet_filter(name, base_id, include_inactive)
+    where_str, params = _build_pet_filter(name, base_id, include_inactive, hide_mutation=hide_mutation)
     
     # 1. 获取总数
     count_query = f"""
