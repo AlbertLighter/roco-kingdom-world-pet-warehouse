@@ -268,7 +268,7 @@ function renderPetCard(pet, speciesName) {
     else if (pet.score >= 30) scoreClass = 'score-mid';
 
     const reasonsHtml = pet.reasons && pet.reasons.length > 0
-        ? `<div class="release-reasons">${pet.reasons.map(r => `<span>${escapeHtml(r)}</span>`).join('')}</div>`
+        ? `<div class="release-reasons ${pet.is_kept ? 'reasons-kept' : ''}">${pet.reasons.map(r => `<span>${escapeHtml(r)}</span>`).join('')}</div>`
         : '';
 
     return `

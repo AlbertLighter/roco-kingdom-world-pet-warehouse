@@ -912,16 +912,19 @@ def compute_species_recommendations(
         }
 
     kept_serials = set()
+    kept_reasons = {}  # serial_num → [reason, ...]
 
     # --- 步骤 1: mutation 无条件保留 ---
     mutation_keep = [p for p in all_pets if p.get("mutation", 0) in MUTATION_KEEP]
     for p in mutation_keep:
         kept_serials.add(p["serial_num"])
+        kept_reasons.setdefault(p["serial_num"], []).append(_KEEP_REASON_TEMPLATES["mutation"])
 
     # --- 步骤 2: 慈悲为怀全部保留 ---
     mercy_pets = [p for p in all_pets if p.get("talent_skill", 0) == TALENT_SKILL_MERCY]
     for p in mercy_pets:
         kept_serials.add(p["serial_num"])
+        kept_reasons.setdefault(p["serial_num"], []).append(_KEEP_REASON_TEMPLATES["mercy"])
 
     # --- 步骤 3: 同乘优选 ---
     ride_pets = [
@@ -932,6 +935,7 @@ def compute_species_recommendations(
     if ride_pets:
         ranked_rides = rank_ride_pets(ride_pets)
         kept_serials.add(ranked_rides[0]["serial_num"])
+        kept_reasons.setdefault(ranked_rides[0]["serial_num"], []).append(_KEEP_REASON_TEMPLATES["ride_best"])
 
     # --- 步骤 4: 爱分享优选 ---
     share_pets = [
@@ -946,6 +950,7 @@ def compute_species_recommendations(
             reverse=True
         )
         kept_serials.add(ranked_shares[0]["serial_num"])
+        kept_reasons.setdefault(ranked_shares[0]["serial_num"], []).append(_KEEP_REASON_TEMPLATES["share_best"])
 
     # --- 步骤 5: 疾行优选（用同乘排序逻辑，只保留最优 1 只）---
     dash_pets = [
@@ -956,6 +961,7 @@ def compute_species_recommendations(
     if dash_pets:
         ranked_dash = rank_ride_pets(dash_pets)
         kept_serials.add(ranked_dash[0]["serial_num"])
+        kept_reasons.setdefault(ranked_dash[0]["serial_num"], []).append(_KEEP_REASON_TEMPLATES["dash_best"])
 
     # --- 步骤 6: 母方体型最优保留（用于繁育）---
     female_pets = [
@@ -964,9 +970,9 @@ def compute_species_recommendations(
         and p["serial_num"] not in kept_serials
     ]
     if female_pets:
-        # 按体型大小（身高+体重）降序，取最大的保留
         female_pets.sort(key=lambda p: (p.get("height", 0) or 0) + (p.get("weight", 0) or 0), reverse=True)
         kept_serials.add(female_pets[0]["serial_num"])
+        kept_reasons.setdefault(female_pets[0]["serial_num"], []).append(_KEEP_REASON_TEMPLATES["female_best"])
 
     # --- 步骤 7: 常规评分排序 ---
     normal_pets = [p for p in all_pets if p["serial_num"] not in kept_serials]
@@ -982,8 +988,9 @@ def compute_species_recommendations(
     scored_pets.sort(key=lambda x: x["score"], reverse=True)
 
     # 保留评分最高的 keep_count 只
-    for sp in scored_pets[:keep_count]:
+    for i, sp in enumerate(scored_pets[:keep_count]):
         kept_serials.add(sp["serial_num"])
+        kept_reasons.setdefault(sp["serial_num"], []).append(_KEEP_REASON_TEMPLATES["normal_top"])
 
     # --- 步骤 8: 确定推荐放生集 ---
     result_pets = []
@@ -999,7 +1006,7 @@ def compute_species_recommendations(
                 ),
                 "is_recommended": False,
                 "is_kept": True,
-                "reasons": [],
+                "reasons": kept_reasons.get(sn, ["保留"]),
             })
         else:
             reasons = next(
@@ -1026,6 +1033,17 @@ def compute_species_recommendations(
         "recommended_serials": sorted(recommended_serials),
         "pets": result_pets,
     }
+
+
+_KEEP_REASON_TEMPLATES = {
+    "mutation": "异色/炫彩/异色炫彩，无条件保留",
+    "mercy": "特长：慈悲为怀，无条件保留",
+    "ride_best": "同乘优选保留（速度天赋最优）",
+    "share_best": "爱分享优选保留（总天赋最高）",
+    "dash_best": "疾行优选保留",
+    "female_best": "母方体型最优，用于繁育",
+    "normal_top": "常规评分排名靠前",
+}
 
 
 _RELEASE_REASON_TEMPLATES = {

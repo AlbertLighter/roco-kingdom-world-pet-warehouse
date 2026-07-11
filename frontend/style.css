@@ -595,6 +595,11 @@ main {
     display: inline-block;
 }
 
+.release-reasons.reasons-kept span {
+    background: #e8f5e9;
+    color: #2e7d32;
+}
+
 /* ---- 弹窗 ---- */
 .modal-overlay {
     position: fixed;
