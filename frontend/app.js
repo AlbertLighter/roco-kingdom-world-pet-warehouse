@@ -80,6 +80,9 @@ const searchBtn = document.getElementById('searchBtn');
 const prevBtn = document.getElementById('prevBtn');
 const nextBtn = document.getElementById('nextBtn');
 const pageInfo = document.getElementById('pageInfo');
+const pageInput = document.getElementById('pageInput');
+const totalPagesEl = document.getElementById('totalPages');
+const totalCountEl = document.getElementById('totalCount');
 const refreshTimeValue = document.getElementById('refreshTimeValue');
 const sortSelect = document.getElementById('sortSelect');
 
@@ -439,12 +442,28 @@ async function setGender(sn, gender) {
 
 function updatePagination(total) {
     const totalPages = Math.ceil(total / pageSize);
-    pageInfo.innerText = `第 ${currentPage} / ${totalPages || 1} 页 (共 ${total} 条)`;
+    pageInput.value = currentPage;
+    pageInput.max = totalPages || 1;
+    totalPagesEl.textContent = totalPages || 1;
+    totalCountEl.textContent = total;
     prevBtn.disabled = currentPage <= 1;
     nextBtn.disabled = currentPage >= totalPages;
     // 刷新后记住当前页
     localStorage.setItem('warehouse_currentPage', currentPage);
 }
+
+function goToPage() {
+    const target = parseInt(pageInput.value);
+    const max = parseInt(pageInput.max);
+    if (isNaN(target) || target < 1) { pageInput.value = currentPage; return; }
+    if (target > max) { pageInput.value = currentPage; return; }
+    if (target === currentPage) return;
+    currentPage = target;
+    fetchPets();
+}
+
+pageInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') goToPage(); });
+pageInput.addEventListener('blur', goToPage);
 
 searchBtn.addEventListener('click', () => { currentPage = 1; fetchPets(); });
 prevBtn.addEventListener('click', () => { if (currentPage > 1) { currentPage--; fetchPets(); } });
