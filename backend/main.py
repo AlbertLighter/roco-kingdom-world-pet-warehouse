@@ -90,6 +90,28 @@ def get_nature_map():
     return {}
 
 
+def _populate_handbook_ids(cursor):
+    """从 PET_HANDBOOK.json 读取图鉴编号映射，写入 pet_base_info.handbook_id"""
+    try:
+        path = os.path.join(CONF_DIR, "PET_HANDBOOK.json")
+        with open(path, "r", encoding="utf-8") as f:
+            handbook_data = json.load(f)
+        cursor.execute("PRAGMA table_info(pet_base_info)")
+        cols = {row[1] for row in cursor.fetchall()}
+        if "handbook_id" not in cols:
+            return
+        for entry in handbook_data:
+            hid = entry["id"]
+            for group in entry.get("include_petbase_id", []):
+                for pid in group.get("petbase_id", []):
+                    cursor.execute(
+                        "UPDATE pet_base_info SET handbook_id = ? WHERE objId = ? AND (handbook_id IS NULL OR handbook_id != ?)",
+                        (hid, pid, hid)
+                    )
+    except Exception as e:
+        print(f"填充图鉴编号失败（可忽略）: {e}")
+
+
 def init_db():
     """启动时自动创建数据库表（如不存在）"""
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
@@ -206,6 +228,7 @@ def init_db():
         ("breeding_slots", "use_king_ball", "INTEGER DEFAULT 0"),
         ("breeding_slots", "king_ball_attr", "TEXT"),
         ("breeding_slots", "breed_big_size", "INTEGER DEFAULT 0"),
+        ("pet_base_info", "handbook_id", "INTEGER"),
     ]
     for table, col, typedef in _migrate_cols:
         try:
@@ -213,6 +236,10 @@ def init_db():
             print(f"迁移: {table}.{col} 已添加")
         except sqlite3.OperationalError:
             pass
+
+    # 填充图鉴编号映射
+    _populate_handbook_ids(cursor)
+    conn.commit()
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS settings (
@@ -457,7 +484,8 @@ def get_pets(
     pageSize: int = Query(20, ge=1, le=100),
     name: Optional[str] = None,
     base_id: Optional[int] = None,
-    include_inactive: bool = Query(False)
+    include_inactive: bool = Query(False),
+    sort: str = Query("time_desc", regex="^(time_desc|time_asc|base_id)$")
 ):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -476,6 +504,14 @@ def get_pets(
     cursor.execute(count_query, params)
     total = cursor.fetchone()[0]
     
+    # 排序映射
+    sort_clauses = {
+        "time_desc": "i.serial_num DESC",
+        "time_asc": "i.serial_num ASC",
+        "base_id": "COALESCE(b.handbook_id, 999999) ASC, i.talent_rank DESC, i.serial_num ASC",
+    }
+    order_by = sort_clauses.get(sort, "i.serial_num DESC")
+
     # 2. 获取分页详细数据
     data_query = f"""
     SELECT 
@@ -497,7 +533,7 @@ def get_pets(
     JOIN pet_base_info b ON i.base_id = b.objId
     LEFT JOIN pet_natures n ON i.nature = n.id
     WHERE {where_str}
-    ORDER BY i.serial_num DESC
+    ORDER BY {order_by}
     LIMIT ? OFFSET ?
     """
     
@@ -515,6 +551,168 @@ def get_pets(
         "pageSize": pageSize,
         "data": pets
     }
+
+@app.get("/api/pets/{serial_num}")
+def get_pet(serial_num: int):
+    """获取单只精灵的完整信息"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    query = """
+    SELECT 
+        i.*, 
+        b.name as base_name, 
+        b.description as base_description,
+        b.familyId as base_familyId,
+        b.itemId as base_itemId,
+        b.egg_groups as base_egg_groups,
+        b.egg_group_int as base_egg_group_int,
+        b.height_high as base_height_high,
+        b.height_low as base_height_low,
+        b.weight_high as base_weight_high,
+        b.weight_low as base_weight_low,
+        n.name as nature_name,
+        n.plus_stat as nature_plus,
+        n.minus_stat as nature_minus
+    FROM pet_instances i
+    JOIN pet_base_info b ON i.base_id = b.objId
+    LEFT JOIN pet_natures n ON i.nature = n.id
+    WHERE i.serial_num = ?
+    """
+    cursor.execute(query, (serial_num,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Pet not found")
+
+    return dict(row)
+
+
+@app.post("/api/pets/{serial_num}/sync")
+def sync_single_pet(serial_num: int):
+    """从游戏服务器重新获取单只精灵数据并更新本地数据库"""
+    from scripts.api_client import gateway_request
+
+    detail = gateway_request("/api/pet/detail", {"id": str(serial_num)})
+    if not detail:
+        raise HTTPException(status_code=502, detail="从游戏服务器获取数据失败")
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # 检查是否已存在
+    cursor.execute("SELECT serial_num FROM pet_instances WHERE serial_num = ?", (serial_num,))
+    exists = cursor.fetchone()
+
+    if exists:
+        # 更新
+        cursor.execute("""
+        UPDATE pet_instances SET
+            name = ?, level = ?, nature = ?, talent_rank = ?,
+            hp = ?, adAttack = ?, apAttack = ?, adDefense = ?, apDefense = ?, speed = ?,
+            hp_race = ?, adAttack_race = ?, apAttack_race = ?, adDefense_race = ?, apDefense_race = ?, speed_race = ?,
+            hp_talent = ?, adAttack_talent = ?, apAttack_talent = ?, adDefense_talent = ?, apDefense_talent = ?, speed_talent = ?,
+            medal = ?, catch_ball = ?, height = ?, weight = ?,
+            bloodline = ?, skill_dam_type = ?,
+            equip_skill_1 = ?, equip_skill_2 = ?, equip_skill_3 = ?, equip_skill_4 = ?,
+            mutation = ?, talent_skill = ?
+        WHERE serial_num = ?
+        """, (
+            detail.get("PetName", ""),
+            detail.get("SpiritLevel", 0),
+            detail.get("PetNature", 0),
+            detail.get("PetTalentRank", 0),
+            detail.get("MaxHp", 0),
+            detail.get("PhyAttack", 0),
+            detail.get("MagAttack", 0),
+            detail.get("PhyDefense", 0),
+            detail.get("MagDefense", 0),
+            detail.get("Speed", 0),
+            detail.get("MaxHpRace", 0),
+            detail.get("PhyAttackRace", 0),
+            detail.get("MagAttackRace", 0),
+            detail.get("PhyDefenseRace", 0),
+            detail.get("MagDefenseRace", 0),
+            detail.get("SpeedRace", 0),
+            detail.get("MaxHpTalent", 0),
+            detail.get("PhyAttackTalent", 0),
+            detail.get("MagAttackTalent", 0),
+            detail.get("PhyDefenseTalent", 0),
+            detail.get("MagDefenseTalent", 0),
+            detail.get("SpeedTalent", 0),
+            detail.get("PetMedal", ""),
+            detail.get("PetCatchBall", 0),
+            detail.get("PetHeight", 0),
+            detail.get("PetWeight", 0),
+            detail.get("PetBloodline", 0),
+            json.dumps(detail.get("PetSkillDamType", []), ensure_ascii=False),
+            detail.get("EquipSkill1", 0),
+            detail.get("EquipSkill2", 0),
+            detail.get("EquipSkill3", 0),
+            detail.get("EquipSkill4", 0),
+            detail.get("PetMutation", 0),
+            detail.get("PetTalentSkill", 0),
+            serial_num
+        ))
+    else:
+        # 插入
+        cursor.execute("""
+        INSERT INTO pet_instances (
+            serial_num, base_id, name, level, nature, talent_rank,
+            hp, adAttack, apAttack, adDefense, apDefense, speed,
+            hp_race, adAttack_race, apAttack_race, adDefense_race, apDefense_race, speed_race,
+            hp_talent, adAttack_talent, apAttack_talent, adDefense_talent, apDefense_talent, speed_talent,
+            is_active, gender, medal, catch_ball, height, weight,
+            bloodline, skill_dam_type,
+            equip_skill_1, equip_skill_2, equip_skill_3, equip_skill_4,
+            mutation, talent_skill
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            int(detail["SerialNum"]),
+            detail["PetBaseId"],
+            detail["PetName"],
+            detail["SpiritLevel"],
+            detail.get("PetNature", 0),
+            detail.get("PetTalentRank", 0),
+            detail["MaxHp"],
+            detail["PhyAttack"],
+            detail["MagAttack"],
+            detail["PhyDefense"],
+            detail["MagDefense"],
+            detail["Speed"],
+            detail.get("MaxHpRace", 0),
+            detail.get("PhyAttackRace", 0),
+            detail.get("MagAttackRace", 0),
+            detail.get("PhyDefenseRace", 0),
+            detail.get("MagDefenseRace", 0),
+            detail.get("SpeedRace", 0),
+            detail.get("MaxHpTalent", 0),
+            detail.get("PhyAttackTalent", 0),
+            detail.get("MagAttackTalent", 0),
+            detail.get("PhyDefenseTalent", 0),
+            detail.get("MagDefenseTalent", 0),
+            detail.get("SpeedTalent", 0),
+            detail.get("PetMedal", ""),
+            detail.get("PetCatchBall", 0),
+            detail.get("PetHeight", 0),
+            detail.get("PetWeight", 0),
+            detail.get("PetBloodline", 0),
+            json.dumps(detail.get("PetSkillDamType", []), ensure_ascii=False),
+            detail.get("EquipSkill1", 0),
+            detail.get("EquipSkill2", 0),
+            detail.get("EquipSkill3", 0),
+            detail.get("EquipSkill4", 0),
+            detail.get("PetMutation", 0),
+            detail.get("PetTalentSkill", 0)
+        ))
+
+    conn.commit()
+    conn.close()
+
+    # 返回最新数据（复用查询逻辑）
+    return get_pet(serial_num)
+
 
 @app.get("/api/base_pets")
 def get_base_pets():

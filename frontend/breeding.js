@@ -9,17 +9,20 @@ function escapeHtml(str) {
 let bloodlineMap = {};
 let typeMap = {};
 let medalMap = {};
+let talentSkillMap = {};
 
 async function fetchConfigs() {
     try {
-        const [blRes, tpRes, mdRes] = await Promise.all([
+        const [blRes, tpRes, mdRes, tsRes] = await Promise.all([
             fetch('/api/config/bloodlines'),
             fetch('/api/config/types'),
-            fetch('/api/config/medals')
+            fetch('/api/config/medals'),
+            fetch('/api/config/talent_skills')
         ]);
         bloodlineMap = await blRes.json();
         typeMap = await tpRes.json();
         medalMap = await mdRes.json();
+        talentSkillMap = await tsRes.json();
     } catch (e) { /* ignore */ }
 }
 
@@ -110,30 +113,12 @@ function renderRuler(label, value, min, max, divisor, unit) {
     `;
 }
 
-function renderStatsTable(pet) {
-    const statConf = [
-        { key: 'hp', label: 'HP', cls: 'stat-label-hp', race: 'hp_race', talent: 'hp_talent' },
-        { key: 'adAttack', label: '物攻', cls: 'stat-label-atk', race: 'adAttack_race', talent: 'adAttack_talent' },
-        { key: 'adDefense', label: '物防', cls: 'stat-label-def', race: 'adDefense_race', talent: 'adDefense_talent' },
-        { key: 'apAttack', label: '魔攻', cls: 'stat-label-spa', race: 'apAttack_race', talent: 'apAttack_talent' },
-        { key: 'apDefense', label: '魔防', cls: 'stat-label-spd', race: 'apDefense_race', talent: 'apDefense_talent' },
-        { key: 'speed', label: '速度', cls: 'stat-label-spe', race: 'speed_race', talent: 'speed_talent' }
-    ];
-    const natureStats = ['HP', '物攻', '物防', '魔攻', '魔防', '速度'];
-    const plusIdx = natureStats.indexOf(pet.nature_plus);
-    const minusIdx = natureStats.indexOf(pet.nature_minus);
-    let rows = '';
-    statConf.forEach((s, i) => {
-        const val = pet[s.key] || 0;
-        const race = pet[s.race] || 0;
-        const talent = pet[s.talent] || 0;
-        let vc = '';
-        if (i === plusIdx) vc = 'stat-buff';
-        else if (i === minusIdx) vc = 'stat-debuff';
-        const tc = talent > 0 ? 'stat-talent-positive' : 'stat-talent-zero';
-        rows += `<tr><td class="${s.cls}" style="text-align:left;font-weight:bold;">${s.label}</td><td class="${vc}">${val}</td><td style="color:#7f8c8d;">${race}</td><td class="${tc}">${talent > 0 ? '+' + talent : talent}</td></tr>`;
-    });
-    return `<table class="stats-table"><thead><tr><th style="text-align:left;">属性</th><th>当前</th><th>种族</th><th>天赋</th></tr></thead><tbody>${rows}</tbody></table>`;
+
+
+function getTalentSkillName(id) {
+    if (!id) return null;
+    const ts = talentSkillMap[id];
+    return ts ? ts.name : null;
 }
 
 function createPetCard(pet) {
@@ -153,7 +138,7 @@ function createPetCard(pet) {
     const medalStr = medals.length ? escapeHtml(medals.join(', ').substring(0, 20)) + (medals.join(', ').length > 20 ? '…' : '') : '-';
 
     return `
-        <div class="pet-card ${genderClass}">
+        <div class="pet-card ${genderClass}" data-serial="${pet.serial_num}">
             <div class="pet-header">
                 <div class="pet-header-left">
                     ${ballUrl ? `<img class="ball-icon" src="${ballUrl}" alt="" onerror="this.style.display='none'">` : ''}
@@ -166,10 +151,11 @@ function createPetCard(pet) {
                 <span class="badge badge-talent-${pet.talent_rank}">${talentRankLabel}</span>
                 ${bloodlineName ? `<span class="badge badge-bloodline">🩸 ${escapeHtml(bloodlineName)}</span>` : ''}
                 ${typeNames.map(t => `<span class="badge badge-type">${escapeHtml(t)}</span>`).join('')}
+                ${getTalentSkillName(pet.talent_skill) ? `<span class="badge badge-talent-skill">⭐ ${escapeHtml(getTalentSkillName(pet.talent_skill))}</span>` : ''}
                 ${pet.mutation ? `<span class="badge" style="background:#fce4ec;color:#c62828;display:inline-flex;align-items:center;gap:3px;"><img src="https://game.gtimg.cn/images/rocom/rocodata/MutationDiffType/${pet.mutation}.png" style="height:16px;width:auto;" onerror="this.style.display='none'"> 异色</span>` : ''}
             </div>
             <div class="pet-content">${renderHexagon(pet)}</div>
-            ${renderStatsTable(pet)}
+
             <div style="font-size:0.78em;text-align:center;margin-bottom:6px;color:#555;">
                 性格: ${escapedNatureName}
                 <span style="color:#27ae60;">(+${escapedNaturePlus})</span>
@@ -185,6 +171,7 @@ function createPetCard(pet) {
             <div class="gender-setter">
                 <button onclick="setGender(${pet.serial_num}, 1)">设为♂</button>
                 <button onclick="setGender(${pet.serial_num}, 2)">设为♀</button>
+                <button onclick="refreshPetCard(${pet.serial_num})" style="margin-left:6px;padding:4px 8px;background:#3498db;color:white;border:none;border-radius:3px;cursor:pointer;font-size:0.78em;" title="刷新此精灵">🔄</button>
             </div>
         </div>
     `;
@@ -329,8 +316,26 @@ function setGender(sn, gender) {
     }).catch(e => console.error(e));
 }
 
+// ---- 刷新单张精灵卡片 ----
+async function refreshPetCard(serialNum) {
+    try {
+        const res = await fetch(`/api/pets/${serialNum}/sync`, { method: 'POST' });
+        if (!res.ok) return;
+        const pet = await res.json();
+        const card = document.querySelector(`.pet-card[data-serial="${serialNum}"]`);
+        if (!card) return;
+        const newHtml = createPetCard(pet);
+        const temp = document.createElement('div');
+        temp.innerHTML = newHtml;
+        card.replaceWith(temp.firstElementChild);
+    } catch (e) {
+        console.error('刷新精灵失败:', e);
+    }
+}
+
 // ---- Exports ----
 window.setGender = setGender;
+window.refreshPetCard = refreshPetCard;
 window.createPetCard = createPetCard;
 
 recommendBtn.addEventListener('click', async () => {

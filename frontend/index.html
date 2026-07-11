@@ -16,6 +16,11 @@
             <div class="search-bar">
                 <input type="text" id="searchInput" placeholder="搜索宠物名称...">
                 <button id="searchBtn">搜索</button>
+                <select id="sortSelect" style="padding:6px 10px;border:none;border-radius:4px;font-size:0.95em;cursor:pointer;">
+                    <option value="time_desc">获取时间 ↓（最新）</option>
+                    <option value="time_asc">获取时间 ↑（最早）</option>
+                    <option value="base_id">按图鉴编号 ↑</option>
+                </select>
             </div>
             <div style="margin-top: 10px; display: flex; justify-content: center; gap: 10px; align-items: center;">
                 <a href="breeding.html" class="nav-btn" style="text-decoration: none; display: inline-block; background: #3498db; color: white; padding: 10px 20px; border-radius: 4px;">进入繁育中心</a>

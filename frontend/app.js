@@ -1,4 +1,5 @@
-let currentPage = 1;
+// 从 localStorage 恢复上次的页码（刷新后留在当前页）
+let currentPage = parseInt(localStorage.getItem('warehouse_currentPage')) || 1;
 const pageSize = 30;
 
 // 配置缓存
@@ -80,6 +81,7 @@ const prevBtn = document.getElementById('prevBtn');
 const nextBtn = document.getElementById('nextBtn');
 const pageInfo = document.getElementById('pageInfo');
 const refreshTimeValue = document.getElementById('refreshTimeValue');
+const sortSelect = document.getElementById('sortSelect');
 
 async function fetchReleaseData() {
     try {
@@ -115,7 +117,8 @@ async function fetchRefreshTime() {
 
 async function fetchPets() {
     const name = searchInput.value.trim().slice(0, 100);
-    const url = `/api/pets?page=${currentPage}&pageSize=${pageSize}&name=${encodeURIComponent(name)}`;
+    const sort = sortSelect.value;
+    const url = `/api/pets?page=${currentPage}&pageSize=${pageSize}&sort=${encodeURIComponent(sort)}&name=${encodeURIComponent(name)}`;
     try {
         const response = await fetch(url);
         const data = await response.json();
@@ -337,7 +340,7 @@ function createPetCard(pet) {
     }
 
     return `
-        <div class="pet-card ${genderClass} ${releaseClass}">
+        <div class="pet-card ${genderClass} ${releaseClass}" data-serial="${pet.serial_num}">
             <!-- 头部 -->
             <div class="pet-header">
                 <div class="pet-header-left">
@@ -361,8 +364,6 @@ function createPetCard(pet) {
             <!-- 雷达图 -->
             <div class="pet-content">${renderHexagon(pet)}</div>
 
-            <!-- 个体值表格 -->
-            ${renderStatsTable(pet)}
 
             <!-- 性格 -->
             <div style="font-size:0.78em;text-align:center;margin-bottom:6px;color:#555;">
@@ -395,9 +396,27 @@ function createPetCard(pet) {
                     const bg = hasConfig ? '#f39c12' : '#bdc3c7';
                     return `<button onclick="openSpeciesConfig(${pet.base_id}, '${escapeHtml(pet.base_name || pet.name)}')" style="margin-left:6px;padding:4px 8px;background:${bg};color:white;border:none;border-radius:3px;cursor:pointer;font-size:0.78em;" title="${hasConfig ? '已配置' : '未配置，点击设置'}">⚙️</button>`;
                 })()}
+                <button onclick="refreshPetCard(${pet.serial_num})" style="margin-left:6px;padding:4px 8px;background:#3498db;color:white;border:none;border-radius:3px;cursor:pointer;font-size:0.78em;" title="刷新此精灵">🔄</button>
             </div>
         </div>
     `;
+}
+
+// ---- 刷新单张精灵卡片 ----
+async function refreshPetCard(serialNum) {
+    try {
+        const res = await fetch(`/api/pets/${serialNum}/sync`, { method: 'POST' });
+        if (!res.ok) return;
+        const pet = await res.json();
+        const card = document.querySelector(`.pet-card[data-serial="${serialNum}"]`);
+        if (!card) return;
+        const newHtml = createPetCard(pet);
+        const temp = document.createElement('div');
+        temp.innerHTML = newHtml;
+        card.replaceWith(temp.firstElementChild);
+    } catch (e) {
+        console.error('刷新精灵失败:', e);
+    }
 }
 
 function renderPets(pets) {
@@ -423,11 +442,14 @@ function updatePagination(total) {
     pageInfo.innerText = `第 ${currentPage} / ${totalPages || 1} 页 (共 ${total} 条)`;
     prevBtn.disabled = currentPage <= 1;
     nextBtn.disabled = currentPage >= totalPages;
+    // 刷新后记住当前页
+    localStorage.setItem('warehouse_currentPage', currentPage);
 }
 
 searchBtn.addEventListener('click', () => { currentPage = 1; fetchPets(); });
 prevBtn.addEventListener('click', () => { if (currentPage > 1) { currentPage--; fetchPets(); } });
 nextBtn.addEventListener('click', () => { currentPage++; fetchPets(); });
+sortSelect.addEventListener('change', () => { currentPage = 1; fetchPets(); });
 
 // ---- 同步逻辑 (不变) ----
 const syncBtn = document.getElementById('syncBtn');
