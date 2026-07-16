@@ -614,7 +614,7 @@ def sync_single_pet(serial_num: int):
         # 更新
         cursor.execute("""
         UPDATE pet_instances SET
-            name = ?, level = ?, nature = ?, talent_rank = ?,
+            base_id = ?, name = ?, level = ?, nature = ?, talent_rank = ?,
             hp = ?, adAttack = ?, apAttack = ?, adDefense = ?, apDefense = ?, speed = ?,
             hp_race = ?, adAttack_race = ?, apAttack_race = ?, adDefense_race = ?, apDefense_race = ?, speed_race = ?,
             hp_talent = ?, adAttack_talent = ?, apAttack_talent = ?, adDefense_talent = ?, apDefense_talent = ?, speed_talent = ?,
@@ -624,6 +624,7 @@ def sync_single_pet(serial_num: int):
             mutation = ?, talent_skill = ?
         WHERE serial_num = ?
         """, (
+            detail.get("PetBaseId", 0),
             detail.get("PetName", ""),
             detail.get("SpiritLevel", 0),
             detail.get("PetNature", 0),
