@@ -449,7 +449,9 @@ def _build_pet_filter(name, base_id, include_inactive, hide_mutation=False):
         where_parts.append("i.base_id = ?")
         params.append(base_id)
     if hide_mutation:
-        where_parts.append("(i.mutation IS NULL OR i.mutation = 0)")
+        # 只隐藏异色(1)、炫彩(8)、异色炫彩(9)。
+        # 污染精灵使用 mutation=32，应继续正常显示。
+        where_parts.append("(i.mutation IS NULL OR i.mutation NOT IN (1, 8, 9))")
 
     where_str = " AND ".join(where_parts) if where_parts else "1=1"
     return where_str, params
@@ -739,6 +741,107 @@ def update_gender(serial_num: int = Body(...), gender: int = Body(...)):
     conn.commit()
     conn.close()
     return {"msg": "Gender updated"}
+
+
+_OCR_STAT_COLUMNS = ("hp", "adAttack", "adDefense", "apAttack", "apDefense", "speed")
+
+
+def match_and_fill_gender_by_stats(data: dict, db_path: str | None = None):
+    """按六维唯一匹配启用中的精灵，仅在性别未知时写入。
+
+    唯一性判断不会预先过滤 gender=0，避免仓库中存在一个已设置和一个未设置的
+    同六维精灵时误把未设置的那一只当成唯一结果。
+    """
+    gender = data.get("gender")
+    if gender not in (1, 2):
+        raise ValueError("gender 必须是 1（雄性）或 2（雌性）")
+
+    stats = []
+    for column in _OCR_STAT_COLUMNS:
+        value = data.get(column)
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(f"{column} 必须是正整数")
+        stats.append(value)
+
+    if db_path is None:
+        conn = get_db_connection()
+    else:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+
+    try:
+        # 锁住写事务，使“查询唯一性 + 条件更新”成为一个原子操作。
+        conn.execute("BEGIN IMMEDIATE")
+        rows = conn.execute(
+            """
+            SELECT serial_num, name, gender
+            FROM pet_instances
+            WHERE is_active = 1
+              AND hp = ? AND adAttack = ? AND adDefense = ?
+              AND apAttack = ? AND apDefense = ? AND speed = ?
+            ORDER BY serial_num
+            """,
+            stats,
+        ).fetchall()
+
+        if not rows:
+            conn.rollback()
+            return {"status": "no_match", "match_count": 0, "updated": False}
+        if len(rows) != 1:
+            conn.rollback()
+            return {
+                "status": "ambiguous",
+                "match_count": len(rows),
+                "updated": False,
+            }
+
+        row = rows[0]
+        serial_num = row["serial_num"]
+        old_gender = row["gender"] or 0
+        result = {
+            "match_count": 1,
+            "updated": False,
+            "serial_num": serial_num,
+            "name": row["name"],
+        }
+        if old_gender != 0:
+            conn.rollback()
+            result.update({"status": "already_set", "gender": old_gender})
+            return result
+
+        cursor = conn.execute(
+            """
+            UPDATE pet_instances
+            SET gender = ?
+            WHERE serial_num = ? AND COALESCE(gender, 0) = 0
+            """,
+            (gender, serial_num),
+        )
+        if cursor.rowcount != 1:
+            conn.rollback()
+            raise RuntimeError("性别条件更新失败，请重试")
+        conn.commit()
+        result.update({"status": "updated", "updated": True, "gender": gender})
+        return result
+    finally:
+        conn.close()
+
+
+@app.post("/api/match_gender_by_stats")
+def match_gender_by_stats(data: dict = Body(...)):
+    """接收 OCR 六维和性别，仅对唯一且性别未知的仓库精灵进行更新。"""
+    try:
+        result = match_and_fill_gender_by_stats(data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if result["status"] == "updated":
+        _sync_logger.info(
+            "OCR 性别同步：serial_num=%s name=%s gender=%s",
+            result["serial_num"],
+            result["name"],
+            result["gender"],
+        )
+    return result
 
 
 @app.post("/api/sync_gender_export")

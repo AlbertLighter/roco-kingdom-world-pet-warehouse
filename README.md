@@ -69,6 +69,13 @@ python backend/main.py
 ```
 访问 [http://localhost:8000](http://localhost:8000) 即可开始使用繁育计算器。
 
+### OCR 自动补全性别
+
+启动本项目后，`roco-warehouse-ocr` 可以把识别到的六维和性别发送到
+`POST /api/match_gender_by_stats`。接口只匹配 `is_active=1` 的精灵，并且仅在六维
+`hp / adAttack / adDefense / apAttack / apDefense / speed` 全部相同、结果恰好一条、
+该条 `gender=0` 时设置性别。无匹配、重复六维或已有性别都不会修改数据库。
+
 ## 📂 项目结构
 
 - `backend/`: 核心逻辑与 API 服务。

@@ -260,7 +260,8 @@ function renderPetCard(pet, speciesName) {
     const talentName = talentNames[pet.talent_rank] || '';
 
     const talentSkillName = getTalentSkillName(pet.talent_skill);
-    const mutationBadge = pet.mutation ? `<span class="badge" style="background:#fce4ec;color:#c62828;">异色</span>` : '';
+    const mutationLabel = {1: '异色', 8: '炫彩', 9: '异色炫彩', 32: '污染'}[pet.mutation] || '特殊形态';
+    const mutationBadge = pet.mutation ? `<span class="badge" style="background:#fce4ec;color:#c62828;">${mutationLabel}</span>` : '';
 
     // 评分颜色
     let scoreClass = 'score-low';
