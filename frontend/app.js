@@ -91,6 +91,8 @@ if (savedSort && [...sortSelect.options].some(o => o.value === savedSort)) {
     sortSelect.value = savedSort;
 }
 const hideMutationCheck = document.getElementById('hideMutationCheck');
+const savedHideMutation = localStorage.getItem('warehouse_hideMutation');
+if (savedHideMutation === 'true') hideMutationCheck.checked = true;
 
 async function fetchReleaseData() {
     try {
@@ -493,7 +495,7 @@ searchBtn.addEventListener('click', () => { currentPage = 1; fetchPets(); });
 prevBtn.addEventListener('click', () => { if (currentPage > 1) { currentPage--; fetchPets(); } });
 nextBtn.addEventListener('click', () => { currentPage++; fetchPets(); });
 sortSelect.addEventListener('change', () => { localStorage.setItem('warehouse_sort', sortSelect.value); currentPage = 1; fetchPets(); });
-hideMutationCheck.addEventListener('change', () => { currentPage = 1; fetchPets(); });
+hideMutationCheck.addEventListener('change', () => { localStorage.setItem('warehouse_hideMutation', hideMutationCheck.checked); currentPage = 1; fetchPets(); });
 
 // ---- 同步逻辑 (不变) ----
 const syncBtn = document.getElementById('syncBtn');
