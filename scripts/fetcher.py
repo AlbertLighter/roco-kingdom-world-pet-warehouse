@@ -474,12 +474,15 @@ def run_sync(progress_callback=None):
             if action == "update":
                 t_cursor.execute("""
                 UPDATE pet_instances SET
+                    base_id = ?, name = ?,
                     medal = ?, catch_ball = ?, height = ?, weight = ?,
                     bloodline = ?, skill_dam_type = ?,
                     equip_skill_1 = ?, equip_skill_2 = ?, equip_skill_3 = ?, equip_skill_4 = ?,
                     mutation = ?, talent_skill = ?
                 WHERE serial_num = ?
                 """, (
+                    pet["PetBaseId"],  # PetBaseId（来自列表 API）
+                    detail.get("PetName", ""),
                     detail.get("PetMedal", ""),
                     detail.get("PetCatchBall", 0),
                     detail.get("PetHeight", 0),
