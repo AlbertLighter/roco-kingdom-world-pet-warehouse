@@ -993,6 +993,8 @@ main { padding: clamp(16px, 2.5vw, 32px); }
 }
 
 .pet-card {
+    position: relative;
+    overflow: hidden;
     min-width: 0;
     padding: 15px;
     border: 1px solid rgba(214,221,233,.9);
@@ -1051,6 +1053,61 @@ main { padding: clamp(16px, 2.5vw, 32px); }
 .pet-card:hover {
     transform: translateY(-4px);
     box-shadow: var(--shadow-md);
+}
+
+/* 放生状态使用顶部色条，和左侧的性别色条互不冲突 */
+.pet-card.card-recommended {
+    border-top: 3px solid #e33e52;
+    border-right: 2px solid rgba(227, 62, 82, .62);
+    border-bottom: 2px solid rgba(227, 62, 82, .62);
+    box-shadow: 0 8px 22px rgba(227, 62, 82, .16);
+}
+
+.pet-card.card-kept {
+    border-top: 3px solid #18a66f;
+    border-right: 2px solid rgba(24, 166, 111, .55);
+    border-bottom: 2px solid rgba(24, 166, 111, .55);
+    box-shadow: 0 8px 22px rgba(24, 166, 111, .13);
+}
+
+.pet-card.card-recommended::before,
+.pet-card.card-kept::before {
+    content: "";
+    position: absolute;
+    z-index: 2;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 5px;
+}
+
+.pet-card.card-recommended::before {
+    background: linear-gradient(90deg, #f06a77, #d92f48);
+}
+
+.pet-card.card-kept::before {
+    background: linear-gradient(90deg, #35c78e, #119964);
+}
+
+.pet-card .release-badge {
+    padding: 5px 9px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    font-size: .72rem;
+    letter-spacing: .01em;
+    box-shadow: 0 3px 9px rgba(20, 31, 54, .14);
+}
+
+.pet-card .release-badge.rec {
+    color: #fff;
+    background: linear-gradient(135deg, #ee5a6b, #d92f48);
+    border-color: #ff8994;
+}
+
+.pet-card .release-badge.kept {
+    color: #fff;
+    background: linear-gradient(135deg, #2fbd85, #0d9661);
+    border-color: #62d7a8;
 }
 
 .pet-header {
@@ -1113,6 +1170,38 @@ main { padding: clamp(16px, 2.5vw, 32px); }
     border-left: 5px solid #df4f83;
 }
 .release-card-badge { border-radius: 999px; padding: 4px 9px; }
+
+.release-pet-card .release-card-badge {
+    display: block;
+    width: calc(100% + 10px);
+    margin: -7px -5px 9px;
+    padding: 7px 10px;
+    color: #fff;
+    border: 1px solid transparent;
+    font-size: .78rem;
+    letter-spacing: .04em;
+    box-shadow: 0 4px 10px rgba(20,31,54,.12);
+}
+
+.release-pet-card .release-card-badge.badge-rec {
+    background: linear-gradient(135deg, #ee5a6b, #d92f48);
+    border-color: #ff8994;
+}
+
+.release-pet-card .release-card-badge.badge-keep {
+    background: linear-gradient(135deg, #2fbd85, #0d9661);
+    border-color: #62d7a8;
+}
+
+.release-pet-card.recommended {
+    border-top: 4px solid #db334b;
+    box-shadow: 0 7px 18px rgba(219, 51, 75, .13);
+}
+
+.release-pet-card.kept {
+    border-top: 4px solid #129b66;
+    box-shadow: 0 7px 18px rgba(18, 155, 102, .12);
+}
 
 .modal-overlay {
     padding: 18px;
