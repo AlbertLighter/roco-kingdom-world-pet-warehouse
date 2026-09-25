@@ -2150,6 +2150,145 @@ def update_species_preferences(data: dict = Body(...)):
     return {"msg": "ok", "updated": updated}
 
 
+@app.get("/api/packets")
+def api_list_packets(
+    page: int = Query(1, ge=1),
+    pageSize: int = Query(40, ge=1, le=100),
+    direction: str = "",
+    opcode: str = "",
+    q: str = "",
+):
+    from scripts.packet_store import list_messages
+
+    return list_messages(page=page, page_size=pageSize, direction=direction, opcode=opcode, q=q)
+
+
+@app.get("/api/packets/{message_id}")
+def api_get_packet(message_id: int):
+    from scripts.packet_store import get_message
+
+    item = get_message(message_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="没有这条包")
+    return item
+
+
+@app.post("/api/packets/{message_id}/parse")
+def api_parse_packet(message_id: int):
+    from scripts.packet_store import parse_message
+
+    try:
+        return parse_message(message_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="没有这条包")
+
+
+@app.post("/api/packets/{message_id}/serialize")
+def api_serialize_packet(message_id: int):
+    from scripts.packet_store import serialize_message
+
+    try:
+        return serialize_message(message_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="没有这条包")
+
+
+@app.post("/api/packets/{message_id}/apply")
+def api_apply_packet(message_id: int):
+    """把一条宠物列表包写入精灵库。只更新这一页里出现的精灵。"""
+    from scripts.capture_sync import PetPageCollector, upsert_pets
+    from scripts.packet_store import PET_LIST_OPCODE, get_message
+    from scripts.rocom_pet import parse_pet_list
+
+    item = get_message(message_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="没有这条包")
+    if int(item["opcode"]) != PET_LIST_OPCODE:
+        raise HTTPException(status_code=400, detail="只有宠物列表包可以写入仓库")
+    if not _sync_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="同步任务正在运行中")
+    try:
+        body = bytes.fromhex(item.get("app_body_hex") or "")
+        collector = PetPageCollector()
+        collector.add_decoded(parse_pet_list(body))
+        records, _complete = collector.snapshot()
+        if not records:
+            raise HTTPException(status_code=400, detail="这一页里没有精灵")
+        return upsert_pets(records, mark_missing=False)
+    finally:
+        _sync_lock.release()
+
+
+@app.delete("/api/packets")
+def api_clear_packets():
+    from scripts.packet_store import clear_messages
+
+    clear_messages()
+    return {"msg": "ok"}
+
+
+@app.post("/api/packets/import_exports")
+def api_import_packet_exports():
+    from scripts.packet_store import import_exports
+
+    try:
+        return import_exports()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.post("/api/packets/record")
+def api_record_packets(payload: Optional[dict] = Body(default=None)):
+    """旁路抓包或回放 pcap，只把解密后的消息记到抓包页，不改精灵库。"""
+    from scripts.packet_store import record_live
+
+    payload = payload or {}
+    mode = str(payload.get("mode") or "live")
+    if mode not in ("live", "pcap"):
+        raise HTTPException(status_code=400, detail="mode 只能是 live 或 pcap")
+    if not _sync_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="同步任务正在运行中")
+
+    def event_stream():
+        progress_queue = queue.Queue()
+
+        def progress_callback(message, current=0, total=0):
+            progress_queue.put({"message": message, "current": current, "total": total})
+
+        def run_task():
+            try:
+                result = record_live(
+                    mode,
+                    iface=str(payload.get("iface") or ""),
+                    seconds=int(payload.get("seconds") or 120),
+                    pcap=str(payload.get("path") or ""),
+                    progress=progress_callback,
+                )
+                progress_queue.put({"done": True, "result": result})
+            except Exception as exc:
+                _sync_logger.error(f"抓包记录失败: {exc}")
+                progress_queue.put({"done": True, "error": str(exc)})
+            finally:
+                _sync_lock.release()
+
+        threading.Thread(target=run_task, daemon=True).start()
+        while True:
+            try:
+                msg = progress_queue.get(timeout=60)
+            except queue.Empty:
+                yield f"data: {json.dumps({'message': '心跳...', 'current': 0, 'total': 0}, ensure_ascii=False)}\n\n"
+                continue
+            if msg.get("done"):
+                if msg.get("error"):
+                    yield f"data: {json.dumps({'error': msg['error']}, ensure_ascii=False)}\n\n"
+                else:
+                    yield f"data: {json.dumps({'done': True, 'result': msg.get('result', {})}, ensure_ascii=False)}\n\n"
+                break
+            yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
 # 挂载前端静态文件
 app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
 

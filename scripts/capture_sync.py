@@ -4,14 +4,14 @@
 
 - 导入：读取 data/ 下已解密的抓包导出（ZoneGetPetInfoByPageRsp）。
 - 实时：在本机 Windows 网卡上旁路复制 TCP 8195，不改游戏连接。
-  解密复用旁边的 RKPP-V2.3。需要 Npcap，并且进程要有抓包权限。
+  分帧、取密钥和解密在本项目里，按 rocom-parse 的 gcp/capture 来。
+  需要 Npcap、scapy、pycryptodome，并且进程要有抓包权限。
   进游戏前开始，然后在游戏里打开宠物仓库并翻页，列表才会下发。
 """
 
 from __future__ import annotations
 
 import json
-import sys
 import threading
 import time
 from pathlib import Path
@@ -190,24 +190,6 @@ class PetPageCollector:
         with self._lock:
             complete = bool(self.total_page) and set(range(1, self.total_page + 1)).issubset(self.pages)
             return list(self.pets.values()), complete
-
-
-class _RkppPetListener:
-    def __init__(self, collector: PetPageCollector) -> None:
-        self.collector = collector
-
-    def handle(self, _row_index: int, row: dict, _parsed_info) -> None:
-        opcode = row.get("opcode")
-        name = row.get("opcode_name") or ""
-        if opcode not in (PET_LIST_OPCODE, str(PET_LIST_OPCODE)) and name != PET_LIST_NAME:
-            return
-        decoded = row.get("decoded_json")
-        if isinstance(decoded, str):
-            if not decoded:
-                return
-            decoded = json.loads(decoded)
-        if isinstance(decoded, dict):
-            self.collector.add_decoded(decoded)
 
 
 def _pages_from_export(path: Path, collector: PetPageCollector) -> int:
@@ -407,75 +389,39 @@ def list_ifaces() -> list[dict]:
     return rows
 
 
-def _rkpp_dir() -> Path:
-    matches = [path for path in PROJECT_ROOT.parent.glob("RKPP-V2.3*") if (path / "rkpp_analyzer.py").is_file()]
-    if not matches:
-        raise FileNotFoundError("旁边没有 RKPP-V2.3，实时抓包和解密需要它")
-    return matches[0]
-
-
-def _load_rkpp():
-    rkpp_dir = str(_rkpp_dir())
-    if rkpp_dir not in sys.path:
-        sys.path.insert(0, rkpp_dir)
-    from rkpp_analyzer import RkppAnalyzer
-    from rkpp_io import SessionLogger, iter_offline_packets
-    from rkpp_network import load_latest_key
-
-    return RkppAnalyzer, SessionLogger, iter_offline_packets, load_latest_key
-
-
-class _QuietLogger:
-    """RKPP 的日志里会带上会话密钥，这里不把密钥写进仓库日志。"""
-
-    def __init__(self, inner) -> None:
-        self.inner = inner
-
-    def log(self, message: str) -> None:
-        if "key_hex=" in message or "key_ascii=" in message:
-            message = message.split("key_hex=")[0].rstrip() + " 会话密钥已记录在本地"
-        self.inner.log(message)
-
-    def close(self) -> None:
-        self.inner.close()
-
-
-def _preset_key(load_latest_key):
-    own = load_latest_key(KEY_DIR)
-    if own:
-        return own
-    return load_latest_key()
-
-
-def _consume_rkpp(source: str, progress, *, iface: str | None = None, seconds: int = 120, pcap: str | None = None, mark_missing: bool = False) -> dict:
+def _consume(source: str, progress, *, iface: str | None = None, seconds: int = 120, pcap: str | None = None, mark_missing: bool = False) -> dict:
     def report(message, current=0, total=0):
         if progress:
             progress(message, current, total)
 
-    RkppAnalyzer, SessionLogger, iter_offline_packets, load_latest_key = _load_rkpp()
+    from scripts.rocom_capture import Engine, FileKeyStore, read_pcap
+    from scripts.rocom_pet import parse_pet_list
+
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-    KEY_DIR.mkdir(parents=True, exist_ok=True)
     collector = PetPageCollector()
-    session = _QuietLogger(SessionLogger(LOG_DIR / "capture.log"))
-    analyzer = RkppAnalyzer(
-        port=8195,
-        logger=session,
-        writer=None,
-        key_file=KEY_DIR / "key.txt",
-        csv_sink=None,
-        preset_key=_preset_key(load_latest_key),
-        stop_after_key=False,
-        key_store_dir=KEY_DIR,
-        analysis_listener=_RkppPetListener(collector),
-    )
-    try:
+    log_path = LOG_DIR / "capture.log"
+
+    from scripts.packet_store import record_message
+
+    def on_message(message) -> None:
+        record_message(message, source=source)
+        if message.direction != "s2c" or message.opcode != PET_LIST_OPCODE:
+            return
+        collector.add_decoded(parse_pet_list(message.app_body))
+
+    with log_path.open("a", encoding="utf-8") as log_file:
+        def write_log(message: str) -> None:
+            log_file.write(message + "\n")
+            log_file.flush()
+
+        engine = Engine(port=8195, keys=FileKeyStore(KEY_DIR), on_message=on_message, log=write_log)
         if source == "pcap":
             path = Path(pcap or "")
             if not path.is_file():
                 raise FileNotFoundError(f"pcap 不存在: {path}")
             report(f"回放 {path.name}", 0, 0)
-            for frame_no, packet in iter_offline_packets(path):
-                analyzer.process_packet(packet, frame_no)
+            for packet in read_pcap(path):
+                engine.feed(packet)
                 if collector.is_complete():
                     break
         else:
@@ -485,7 +431,7 @@ def _consume_rkpp(source: str, progress, *, iface: str | None = None, seconds: i
             sniffer = AsyncSniffer(
                 iface=iface,
                 store=False,
-                prn=analyzer.process_packet,
+                prn=engine.feed,
                 filter="tcp port 8195",
             )
             sniffer.start()
@@ -501,12 +447,15 @@ def _consume_rkpp(source: str, progress, *, iface: str | None = None, seconds: i
                     time.sleep(0.5)
             finally:
                 sniffer.stop()
-    finally:
-        session.close()
 
     records, complete = collector.snapshot()
     if not records:
-        raise RuntimeError("没有解出精灵列表。确认抓包在进游戏前已开始，并且游戏里打开过宠物仓库。")
+        detail = ""
+        if engine.no_key:
+            detail = " 还没有会话密钥：进游戏前就要开始抓。"
+        elif engine.bad_key:
+            detail = " 缓存的会话密钥对不上，重新登录后再抓一次。"
+        raise RuntimeError("没有解出精灵列表。" + detail + "确认游戏里打开过宠物仓库。")
     if mark_missing and not complete:
         report("页数不齐，只更新出现过的精灵", len(records), collector.total_page or len(records))
         mark_missing = False
@@ -519,8 +468,8 @@ def sync_from_live(iface: str, seconds: int = 120, progress=None) -> dict:
     if not iface:
         raise ValueError("要指定网卡名，例如 以太网")
     seconds = max(10, min(int(seconds), 600))
-    return _consume_rkpp("live", progress, iface=iface, seconds=seconds, mark_missing=True)
+    return _consume("live", progress, iface=iface, seconds=seconds, mark_missing=True)
 
 
 def sync_from_pcap(path: str, progress=None) -> dict:
-    return _consume_rkpp("pcap", progress, pcap=path)
+    return _consume("pcap", progress, pcap=path)
