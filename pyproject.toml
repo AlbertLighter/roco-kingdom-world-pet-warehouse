@@ -17,6 +17,9 @@ dev = [
     "ruff>=0.9.0",
     "mypy>=1.15.0",
 ]
+capture = [
+    "scapy>=2.5.0",
+]
 
 [tool.ruff]
 target-version = "py312"

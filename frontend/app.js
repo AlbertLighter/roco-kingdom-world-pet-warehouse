@@ -578,6 +578,134 @@ function resetSyncBtn() {
     syncBtn.textContent = '同步精灵';
 }
 
+// ---- 抓包同步：导入已解密导出，或在本机网卡旁路抓 8195 ----
+const captureBtn = document.getElementById('captureBtn');
+const capturePanel = document.getElementById('capturePanel');
+const captureIface = document.getElementById('captureIface');
+const captureProgress = document.getElementById('captureProgress');
+const captureProgressBar = document.getElementById('captureProgressBar');
+const captureProgressText = document.getElementById('captureProgressText');
+const captureLog = document.getElementById('captureLog');
+
+async function loadCaptureIfaces() {
+    captureIface.innerHTML = '';
+    try {
+        const res = await fetch('/api/capture_ifaces');
+        const data = await res.json();
+        const rows = data.ifaces || [];
+        if (!rows.length) {
+            const option = document.createElement('option');
+            option.value = '';
+            option.textContent = data.error || '没有可用网卡（需要 scapy 和 Npcap）';
+            captureIface.appendChild(option);
+            return;
+        }
+        rows.forEach((row) => {
+            const option = document.createElement('option');
+            option.value = row.name;
+            option.textContent = row.detail ? `${row.name}  ${row.detail}` : row.name;
+            captureIface.appendChild(option);
+        });
+    } catch (error) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = '网卡列表加载失败';
+        captureIface.appendChild(option);
+    }
+}
+
+captureBtn.addEventListener('click', () => {
+    const open = capturePanel.style.display === 'none';
+    capturePanel.style.display = open ? 'block' : 'none';
+    if (open && !captureIface.options.length) loadCaptureIfaces();
+});
+
+function addCaptureLog(text) {
+    const line = document.createElement('div');
+    line.textContent = text;
+    line.style.padding = '1px 0';
+    captureLog.appendChild(line);
+    captureLog.scrollTop = captureLog.scrollHeight;
+}
+
+function setCaptureBusy(busy) {
+    ['captureImportBtn', 'captureLiveBtn', 'capturePcapBtn', 'captureBtn'].forEach((id) => {
+        const node = document.getElementById(id);
+        if (node) node.disabled = busy;
+    });
+}
+
+async function runCaptureSync(payload) {
+    setCaptureBusy(true);
+    captureProgress.style.display = 'block';
+    captureLog.innerHTML = '';
+    captureProgressBar.style.width = '0%';
+    captureProgressText.textContent = '0%';
+    try {
+        const response = await fetch('/api/sync_capture', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        if (!response.ok) {
+            const err = await response.json();
+            addCaptureLog(`❌ ${err.detail || '同步失败'}`);
+            setCaptureBusy(false);
+            return;
+        }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+            for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                try { handleCaptureEvent(JSON.parse(line.slice(6))); } catch (e) { /* ignore */ }
+            }
+        }
+    } catch (error) {
+        addCaptureLog(`❌ 网络错误: ${error.message}`);
+    }
+    setCaptureBusy(false);
+}
+
+function handleCaptureEvent(data) {
+    if (data.error) { addCaptureLog(`❌ 错误: ${data.error}`); return; }
+    if (data.done) {
+        captureProgressBar.style.width = '100%';
+        captureProgressText.textContent = '100%';
+        const r = data.result || {};
+        addCaptureLog(`✅ 完成：新增 ${r.new || 0}，更新 ${r.updated || 0}，共 ${r.total || 0}`);
+        fetchPets();
+        return;
+    }
+    const { message, current, total } = data;
+    if (message) addCaptureLog(message);
+    if (total > 0) {
+        const pct = Math.min(100, Math.round((current / total) * 100));
+        captureProgressBar.style.width = `${pct}%`;
+        captureProgressText.textContent = `${pct}% (${current}/${total})`;
+    }
+}
+
+document.getElementById('captureImportBtn').addEventListener('click', () => {
+    runCaptureSync({ mode: 'export' });
+});
+document.getElementById('captureLiveBtn').addEventListener('click', () => {
+    runCaptureSync({
+        mode: 'live',
+        iface: captureIface.value,
+        seconds: Number(document.getElementById('captureSeconds').value) || 120,
+    });
+});
+document.getElementById('capturePcapBtn').addEventListener('click', () => {
+    runCaptureSync({ mode: 'pcap', path: document.getElementById('capturePcap').value.trim() });
+});
+
 // ---- 性别同步 ----
 const syncGenderBtn = document.getElementById('syncGenderBtn');
 const syncGenderProgress = document.getElementById('syncGenderProgress');
