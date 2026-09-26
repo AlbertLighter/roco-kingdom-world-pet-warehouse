@@ -27,6 +27,14 @@
             </div>
 
             <!-- 筛选栏 -->
+            <div id="autoRelease" class="release-filter-bar">
+                <button id="calibrateBtn" type="button" style="padding: 8px 14px; background: #0e6655; color: white; border: none; border-radius: 4px; cursor: pointer;">校准点击</button>
+                <button id="skipConfirmBtn" type="button" style="padding: 8px 14px; background: #7f8c8d; color: white; border: none; border-radius: 4px; cursor: pointer;">没有确认框</button>
+                <button id="autoReleaseBtn" type="button" style="padding: 8px 14px; background: #c0392b; color: white; border: none; border-radius: 4px; cursor: pointer;">自动放生</button>
+                <button id="stopReleaseBtn" type="button" style="padding: 8px 14px; background: #7f8c8d; color: white; border: none; border-radius: 4px; cursor: pointer;">停止</button>
+                <span id="autoReleaseStatus" style="font-size: 0.9em;"></span>
+            </div>
+
             <div class="release-filter-bar">
                 <span>品种筛选:</span>
                 <select id="speciesFilter">
@@ -107,6 +115,6 @@
         </div>
     </div>
 
-    <script src="release.js?v=1"></script>
+    <script src="release.js?v=2"></script>
 </body>
 </html>

@@ -385,12 +385,22 @@ def record_divert(seconds: int | None = None, progress=None) -> dict:
             if saved["n"] == 1 or saved["n"] % 25 == 0:
                 emit(f"已记录 {saved['n']} 条", saved["n"], 0)
         if direction == "s2c" and opcode == 0x0102 and payload:
+            from scripts.pet_boxes import apply_boxes
             from scripts.world_teams import apply_world_teams
 
             marked = apply_world_teams(payload)
             if marked.get("updated"):
                 emit(f"已标记大世界队伍 {marked['updated']} 只", saved["n"], 0)
+            boxes = apply_boxes(payload)
+            if boxes.get("updated"):
+                emit(f"已记录盒子位置 {boxes['updated']} 只，{boxes['boxes']} 个盒子", saved["n"], 0)
             return
+        if direction == "s2c" and opcode == 0x01C5 and payload:
+            from scripts.pet_boxes import mark_freed
+
+            freed = mark_freed(payload)
+            if freed:
+                emit(f"监听到放生成功 {freed} 只，已从仓库标出", saved["n"], 0)
         if direction != "s2c" or opcode != PET_LIST_OPCODE or not payload:
             return
         decoded = parse_pet_list(payload)

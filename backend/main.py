@@ -225,6 +225,8 @@ def init_db():
         ("pet_instances", "talent_skill", "INTEGER DEFAULT 0"),
         ("pet_instances", "world_team", "INTEGER"),
         ("pet_instances", "world_slot", "INTEGER"),
+        ("pet_instances", "box_id", "INTEGER"),
+        ("pet_instances", "box_slot", "INTEGER"),
         ("breeding_slots", "nature_id", "INTEGER"),
         ("breeding_slots", "talents", "TEXT"),
         ("breeding_slots", "use_king_ball", "INTEGER DEFAULT 0"),
@@ -2061,6 +2063,130 @@ def get_release_recommendations(
         },
         "species_groups": page_groups,
     }
+
+
+def _release_click_groups() -> tuple[list[tuple[int, list[int]]], int]:
+    """建议放生、不在大世界队伍、并且知道盒子格位的精灵。"""
+    data = get_release_recommendations(page=1, page_size=5000)
+    serials = []
+    for group in data["species_groups"]:
+        serials.extend(group["recommended_serials"])
+    if not serials:
+        return [], 0
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    placeholders = ",".join("?" for _ in serials)
+    cursor.execute(
+        f"""
+        SELECT serial_num, box_id, box_slot
+        FROM pet_instances
+        WHERE serial_num IN ({placeholders})
+          AND is_active = 1
+          AND COALESCE(world_team, 0) = 0
+          AND COALESCE(mutation, 0) NOT IN (1, 8, 9)
+          AND box_id IS NOT NULL
+          AND box_slot IS NOT NULL
+        """,
+        serials,
+    )
+    grouped: dict[int, list[int]] = {}
+    for row in cursor.fetchall():
+        grouped.setdefault(int(row["box_id"]), []).append(int(row["box_slot"]))
+    conn.close()
+    groups = [(box_id, sorted(set(slots))) for box_id, slots in sorted(grouped.items())]
+    count = sum(len(slots) for _box, slots in groups)
+    return groups, count
+
+
+@app.get("/api/release_click/preview")
+def release_click_preview():
+    from scripts.game_release_click import calibration_status
+
+    groups, count = _release_click_groups()
+    status = calibration_status()
+    return {
+        "count": min(count, 90),
+        "boxes": len(groups),
+        "ready": status["ready"],
+        "calibration": status,
+    }
+
+
+@app.get("/api/release_click/calibration")
+def release_click_calibration():
+    from scripts.game_release_click import calibration_status
+
+    return calibration_status()
+
+
+@app.post("/api/release_click/calibrate")
+def release_click_calibrate_start():
+    from scripts.game_release_click import start_calibration
+
+    try:
+        start_calibration()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@app.post("/api/release_click/calibrate/skip_confirm")
+def release_click_skip_confirm():
+    from scripts.game_release_click import skip_confirm
+
+    try:
+        skip_confirm()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@app.post("/api/release_click/stop")
+def release_click_stop():
+    from scripts.game_release_click import request_stop
+
+    request_stop()
+    return {"ok": True}
+
+
+@app.post("/api/release_click/run")
+def release_click_run():
+    """在游戏窗口里点击建议放生的格子。SSE 返回进度。"""
+    from scripts.game_release_click import run_release
+
+    groups, count = _release_click_groups()
+    if count == 0:
+        raise HTTPException(status_code=400, detail="没有可点击的放生目标，或还没有盒子位置")
+
+    def event_stream():
+        progress_queue = queue.Queue()
+
+        def progress_callback(message, current=0, total=0):
+            progress_queue.put({"message": message, "current": current, "total": total})
+
+        def run_task():
+            try:
+                result = run_release(groups, progress=progress_callback)
+                progress_queue.put({"done": True, "result": result})
+            except Exception as exc:
+                progress_queue.put({"done": True, "error": str(exc)})
+
+        threading.Thread(target=run_task, daemon=True).start()
+        while True:
+            try:
+                msg = progress_queue.get(timeout=60)
+            except queue.Empty:
+                yield f"data: {json.dumps({'message': '心跳...', 'current': 0, 'total': 0})}\n\n"
+                continue
+            if msg.get("done"):
+                if msg.get("error"):
+                    yield f"data: {json.dumps({'error': msg['error']}, ensure_ascii=False)}\n\n"
+                else:
+                    yield f"data: {json.dumps({'done': True, 'result': msg.get('result', {})}, ensure_ascii=False)}\n\n"
+                break
+            yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @app.get("/api/release_summary")

@@ -19,6 +19,11 @@ document.addEventListener('DOMContentLoaded', async function () {
     });
 
     document.getElementById('configBtn').addEventListener('click', openConfigModal);
+    document.getElementById('calibrateBtn').addEventListener('click', startCalibration);
+    document.getElementById('skipConfirmBtn').addEventListener('click', skipConfirm);
+    document.getElementById('autoReleaseBtn').addEventListener('click', startAutoRelease);
+    document.getElementById('stopReleaseBtn').addEventListener('click', () => fetch('/api/release_click/stop', { method: 'POST' }));
+    refreshCalibration();
 
     document.getElementById('prevBtn').addEventListener('click', () => {
         if (currentPage > 1) { currentPage--; renderPage(); }
@@ -51,6 +56,78 @@ document.addEventListener('DOMContentLoaded', async function () {
         if (e.target === this) closeSpeciesConfigModal();
     });
 });
+
+async function refreshCalibration() {
+    const status = document.getElementById('autoReleaseStatus');
+    try {
+        const res = await fetch('/api/release_click/calibration');
+        const data = await res.json();
+        status.textContent = data.listening ? (data.prompt || '请在游戏窗口点击') : (data.ready ? '点击位置已校准' : '还没有校准');
+        if (data.listening) setTimeout(refreshCalibration, 600);
+    } catch (error) {
+        status.textContent = '校准状态获取失败';
+    }
+}
+
+async function startCalibration() {
+    const status = document.getElementById('autoReleaseStatus');
+    const res = await fetch('/api/release_click/calibrate', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+        status.textContent = data.detail || '无法开始校准';
+        return;
+    }
+    refreshCalibration();
+}
+
+async function skipConfirm() {
+    const status = document.getElementById('autoReleaseStatus');
+    const res = await fetch('/api/release_click/calibrate/skip_confirm', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    status.textContent = res.ok ? '校准已保存' : (data.detail || '现在还不能跳过');
+    refreshCalibration();
+}
+
+async function startAutoRelease() {
+    const status = document.getElementById('autoReleaseStatus');
+    const preview = await fetch('/api/release_click/preview');
+    const info = await preview.json();
+    if (!info.ready) {
+        status.textContent = '请先校准点击位置';
+        return;
+    }
+    if (!info.count) {
+        status.textContent = '没有可点击的放生目标';
+        return;
+    }
+    if (!window.confirm(`将在游戏窗口点击放生 ${info.count} 只。请先打开第一只所在的盒子，并处于勾选模式。`)) return;
+    const response = await fetch('/api/release_click/run', { method: 'POST' });
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        status.textContent = err.detail || '无法开始';
+        return;
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+                const event = JSON.parse(line.slice(6));
+                if (event.error) status.textContent = event.error;
+                else if (event.message) status.textContent = event.message;
+                else if (event.done) status.textContent = `点击结束，共 ${event.result?.clicked || 0} 下`;
+            } catch (error) { /* ignore */ }
+        }
+    }
+    loadRecommendations();
+}
 
 async function loadNatureMap() {
     try {
