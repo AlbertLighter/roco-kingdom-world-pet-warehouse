@@ -354,6 +354,46 @@ def import_export_file(path: Path) -> int:
     return saved
 
 
+def record_divert(seconds: int = 120, progress=None) -> dict:
+    """改道读取游戏连接，只把解密后的下行消息记到抓包页。"""
+    from scripts.game_relay import run_relay
+    from scripts.rocom_capture import Message
+
+    def report(message, current=0, total=0):
+        if progress:
+            progress(message, current, total)
+
+    saved = {"n": 0}
+
+    def emit(message: str, current: int = 0, total: int = 0) -> None:
+        _sync_logger.info("抓包 %s", message)
+        report(message, current, total)
+
+    def on_s2c(opcode: int, payload: bytes) -> None:
+        message = Message("s2c", opcode, "divert", payload, payload)
+        if record_message(message, source="divert"):
+            saved["n"] += 1
+            if saved["n"] == 1 or saved["n"] % 25 == 0:
+                emit(f"已记录 {saved['n']} 条", saved["n"], 0)
+
+    emit("正在把游戏的 8195 改道到本机。请在这之后进入游戏。")
+    stats = run_relay(seconds, on_s2c, progress=emit)
+    summary = (
+        f"改道记录 密钥={'有' if stats.get('key') else '无'}，"
+        f"下行 {stats.get('s2c', 0)}，解密失败 {stats.get('failed', 0)}"
+    )
+    emit(summary, saved["n"], saved["n"])
+    if saved["n"] == 0 and not stats.get("key"):
+        emit("没有拿到 0x1002 会话密钥。用管理员启动服务，先点改道记录，再进入游戏。", 0, 0)
+    emit(f"记录结束，共 {saved['n']} 条", saved["n"], saved["n"])
+    return {
+        "saved": saved["n"],
+        "no_key": 0 if stats.get("key") else 1,
+        "bad_key": stats.get("failed", 0),
+        "summary": summary,
+    }
+
+
 def record_live(mode: str, iface: str = "", seconds: int = 120, pcap: str = "", progress=None) -> dict:
     """旁路抓包或回放，只记解密后的消息。"""
     from scripts.rocom_capture import Engine, FileKeyStore, read_pcap

@@ -2293,19 +2293,21 @@ def api_import_packet_exports():
 
 @app.post("/api/packets/record")
 def api_record_packets(payload: Optional[dict] = Body(default=None)):
-    """旁路抓包或回放 pcap，只把解密后的消息记到抓包页，不改精灵库。"""
-    from scripts.packet_store import record_live
+    """改道抓包或回放 pcap，只把解密后的消息记到抓包页，不改精灵库。"""
+    from scripts.packet_store import record_divert, record_live
 
     payload = payload or {}
-    mode = str(payload.get("mode") or "live")
-    if mode not in ("live", "pcap"):
-        raise HTTPException(status_code=400, detail="mode 只能是 live 或 pcap")
+    mode = str(payload.get("mode") or "divert")
+    if mode not in ("live", "pcap", "divert"):
+        raise HTTPException(status_code=400, detail="mode 只能是 live、pcap 或 divert")
     iface = str(payload.get("iface") or "")
     seconds = int(payload.get("seconds") or 120)
     path = str(payload.get("path") or "")
     label = f"抓包记录 mode={mode}"
     if mode == "live":
         label += f" iface={iface or '未指定'} seconds={seconds}"
+    elif mode == "divert":
+        label += f" seconds={seconds}"
     else:
         label += f" path={path or '未指定'}"
     if not _begin_sync(label):
@@ -2319,13 +2321,16 @@ def api_record_packets(payload: Optional[dict] = Body(default=None)):
 
         def run_task():
             try:
-                result = record_live(
-                    mode,
-                    iface=iface,
-                    seconds=seconds,
-                    pcap=path,
-                    progress=progress_callback,
-                )
+                if mode == "divert":
+                    result = record_divert(seconds, progress=progress_callback)
+                else:
+                    result = record_live(
+                        mode,
+                        iface=iface,
+                        seconds=seconds,
+                        pcap=path,
+                        progress=progress_callback,
+                    )
                 progress_queue.put({"done": True, "result": result})
                 _sync_logger.info(
                     "抓包记录完成：saved=%s no_key=%s bad_key=%s %s",

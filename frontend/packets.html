@@ -28,7 +28,7 @@
     <header class="app-header">
         <div class="header-eyebrow">PACKET LOG</div>
         <h1>抓包记录</h1>
-        <p class="header-subtitle">查看解密后的游戏消息，解析字段，再序列化成 JSON</p>
+        <p class="header-subtitle">改道读取游戏连接，查看解密后的消息，解析字段，再序列化成 JSON。需要管理员启动服务，先点记录再进游戏。</p>
         <div class="header-actions" style="margin-top: 10px; display: flex; justify-content: center; gap: 10px; flex-wrap: wrap;">
             <a href="index.html" style="text-decoration: none; display: inline-block; background: #7f8c8d; color: white; padding: 10px 20px; border-radius: 4px;">← 返回仓库</a>
         </div>
@@ -37,9 +37,8 @@
         <div class="packet-panel" style="margin-bottom: 16px;">
             <div class="packet-toolbar">
                 <button id="importBtn" type="button" style="padding: 8px 14px; background: #1abc9c; color: #fff; border: 0; border-radius: 4px; cursor: pointer;">载入 data 导出</button>
-                <select id="iface"></select>
                 <input id="seconds" type="number" min="10" max="600" value="120" style="width: 72px;" title="最长秒数">
-                <button id="recordBtn" type="button" style="padding: 8px 14px; background: #148f77; color: #fff; border: 0; border-radius: 4px; cursor: pointer;">开始记录抓包</button>
+                <button id="recordBtn" type="button" style="padding: 8px 14px; background: #b9770e; color: #fff; border: 0; border-radius: 4px; cursor: pointer;">改道记录</button>
                 <input id="pcapPath" type="text" placeholder="pcap 路径" style="min-width: 180px;">
                 <button id="replayBtn" type="button" style="padding: 8px 14px; background: #0e6655; color: #fff; border: 0; border-radius: 4px; cursor: pointer;">回放并记录</button>
                 <button id="clearBtn" type="button" style="padding: 8px 14px; background: #c0392b; color: #fff; border: 0; border-radius: 4px; cursor: pointer;">清空</button>

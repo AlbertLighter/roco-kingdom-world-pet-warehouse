@@ -18,31 +18,6 @@ function setBusy(busy) {
     });
 }
 
-async function loadIfaces() {
-    const select = document.getElementById("iface");
-    select.innerHTML = "";
-    try {
-        const res = await fetch("/api/capture_ifaces");
-        const data = await res.json();
-        const rows = data.ifaces || [];
-        if (!rows.length) {
-            const option = document.createElement("option");
-            option.value = "";
-            option.textContent = "没有可用网卡";
-            select.appendChild(option);
-            return;
-        }
-        rows.forEach((row) => {
-            const option = document.createElement("option");
-            option.value = row.name;
-            option.textContent = row.detail ? `${row.name}  ${row.detail}` : row.name;
-            select.appendChild(option);
-        });
-    } catch (error) {
-        jobLog.textContent = "网卡列表加载失败";
-    }
-}
-
 async function loadPackets() {
     const params = new URLSearchParams({
         page: String(page),
@@ -65,7 +40,7 @@ async function loadPackets() {
         bodyEl.appendChild(tr);
     });
     if (!data.data || !data.data.length) {
-        bodyEl.innerHTML = `<tr><td colspan="4">还没有记录。可以载入 data 导出，或开始抓包。</td></tr>`;
+        bodyEl.innerHTML = `<tr><td colspan="4">还没有记录。可以载入 data 导出，或改道记录。</td></tr>`;
     }
 }
 
@@ -204,8 +179,7 @@ document.getElementById("recordBtn").addEventListener("click", async () => {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-                mode: "live",
-                iface: document.getElementById("iface").value,
+                mode: "divert",
                 seconds: Number(document.getElementById("seconds").value) || 120,
             }),
         });
@@ -246,5 +220,4 @@ document.getElementById("clearBtn").addEventListener("click", async () => {
     loadPackets();
 });
 
-loadIfaces();
 loadPackets();
