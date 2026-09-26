@@ -183,7 +183,10 @@ document.getElementById("recordBtn").addEventListener("click", async () => {
                 seconds: Number(document.getElementById("seconds").value) || 120,
             }),
         });
-        jobLog.textContent = `记录结束，共 ${result.saved || 0} 条`;
+        const sync = result.sync;
+        jobLog.textContent = sync
+            ? `记录结束，共 ${result.saved || 0} 条。精灵已同步：新增 ${sync.new || 0}，更新 ${sync.updated || 0}，共 ${sync.total || 0}`
+            : `记录结束，共 ${result.saved || 0} 条`;
         page = 1;
         await loadPackets();
     } catch (error) {

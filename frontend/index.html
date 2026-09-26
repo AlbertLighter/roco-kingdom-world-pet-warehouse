@@ -35,7 +35,6 @@
                 <a href="release.html" class="nav-btn nav-danger" style="text-decoration: none; display: inline-block; background: #e74c3c; color: white; padding: 10px 20px; border-radius: 4px;">♻ 放生推荐</a>
                 <button id="configSpeciesBtn" style="padding: 10px 20px; background: #f39c12; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">⚙️ 品种偏好</button>
                 <button id="syncBtn" style="padding: 10px 20px; background: #27ae60; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">同步精灵</button>
-                <button id="captureBtn" style="padding: 10px 20px; background: #16a085; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">抓包同步</button>
                 <button id="syncGenderBtn" style="padding: 10px 20px; background: #8e44ad; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">同步性别</button>
             </div>
             <div id="syncProgress" style="display: none; margin-top: 12px; padding: 0 20px;">
@@ -44,26 +43,6 @@
                     <span id="syncProgressText" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 0.85em; color: white; text-shadow: 0 1px 2px rgba(0,0,0,0.3);">0%</span>
                 </div>
                 <div id="syncLog" style="margin-top: 8px; max-height: 120px; overflow-y: auto; font-size: 0.85em; color: rgba(255,255,255,0.85); text-align: left; padding: 0 4px;"></div>
-            </div>
-            <div id="capturePanel" style="display: none; margin-top: 12px; padding: 12px 20px; text-align: left; background: rgba(0,0,0,0.15); border-radius: 6px;">
-                <p style="margin: 0 0 8px; font-size: 0.9em; color: rgba(255,255,255,0.9);">改道同步把游戏的 8195 接到本机代理，能看到完整握手。需要用管理员启动本服务，先点按钮再进游戏，然后打开宠物仓库并翻页。结束时这局连接会断开。不要同时开着 RocoMITM 的 WinDivert。旁路抓包不改连接，但可能漏掉密钥帧。</p>
-                <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
-                    <button id="captureImportBtn" type="button" style="padding: 8px 14px; background: #1abc9c; color: white; border: none; border-radius: 4px; cursor: pointer;">导入已有导出</button>
-                    <select id="captureIface" style="padding: 8px; border-radius: 4px; min-width: 160px;"></select>
-                    <input id="captureSeconds" type="number" min="10" max="600" value="120" style="width: 72px; padding: 8px; border-radius: 4px;" title="最长抓包秒数">
-                    <button id="captureLiveBtn" type="button" style="padding: 8px 14px; background: #148f77; color: white; border: none; border-radius: 4px; cursor: pointer;">开始实时抓包</button>
-                    <button id="captureDivertBtn" type="button" style="padding: 8px 14px; background: #b9770e; color: white; border: none; border-radius: 4px; cursor: pointer;">改道同步</button>
-                    <input id="capturePcap" type="text" placeholder="pcap 路径" style="padding: 8px; border-radius: 4px; min-width: 180px;">
-                    <button id="capturePcapBtn" type="button" style="padding: 8px 14px; background: #0e6655; color: white; border: none; border-radius: 4px; cursor: pointer;">回放 pcap</button>
-                <a href="packets.html" style="color: #fff;">打开抓包记录</a>
-                </div>
-                <div id="captureProgress" style="display: none; margin-top: 12px;">
-                    <div style="background: rgba(255,255,255,0.15); border-radius: 4px; overflow: hidden; height: 22px; position: relative;">
-                        <div id="captureProgressBar" style="height: 100%; background: linear-gradient(90deg, #1abc9c, #148f77); width: 0%; transition: width 0.3s ease; border-radius: 4px;"></div>
-                        <span id="captureProgressText" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 0.85em; color: white; text-shadow: 0 1px 2px rgba(0,0,0,0.3);">0%</span>
-                    </div>
-                    <div id="captureLog" style="margin-top: 8px; max-height: 120px; overflow-y: auto; font-size: 0.85em; color: rgba(255,255,255,0.85);"></div>
-                </div>
             </div>
             <div id="syncGenderProgress" style="display: none; margin-top: 12px; padding: 0 20px;">
                 <div style="background: rgba(255,255,255,0.15); border-radius: 4px; overflow: hidden; height: 22px; position: relative;">

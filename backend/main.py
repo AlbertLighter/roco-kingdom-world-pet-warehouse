@@ -1814,91 +1814,6 @@ def get_sync_status():
     return {"cooldown_active": False, "can_sync": True}
 
 
-@app.get("/api/capture_ifaces")
-def capture_ifaces():
-    """本机可抓包的网卡。没有安装 scapy 时返回空列表。"""
-    from scripts.capture_sync import list_ifaces
-
-    try:
-        rows = list_ifaces()
-    except Exception as exc:
-        return {"ifaces": [], "error": str(exc)}
-    return {"ifaces": rows}
-
-
-@app.post("/api/sync_capture")
-def sync_capture(payload: Optional[dict] = Body(default=None)):
-    """从抓包结果或本机旁路抓包写入精灵列表。SSE 进度与 /api/sync 相同。"""
-    from scripts.capture_sync import sync_from_divert, sync_from_export, sync_from_live, sync_from_pcap
-
-    payload = payload or {}
-    mode = str(payload.get("mode") or "export")
-    if mode not in ("export", "live", "pcap", "divert"):
-        raise HTTPException(status_code=400, detail="mode 只能是 export、live、pcap 或 divert")
-    iface = str(payload.get("iface") or "")
-    seconds = int(payload.get("seconds") or 120)
-    path = str(payload.get("path") or "")
-    label = f"抓包同步 mode={mode}"
-    if mode == "live":
-        label += f" iface={iface or '未指定'} seconds={seconds}"
-    elif mode == "pcap":
-        label += f" path={path or '未指定'}"
-    elif mode == "divert":
-        label += f" seconds={seconds}"
-    else:
-        label += f" path={path or 'data/'}"
-    if not _begin_sync(label):
-        raise HTTPException(status_code=409, detail="同步任务正在运行中")
-
-    def event_stream():
-        progress_queue = queue.Queue()
-
-        def progress_callback(message, current=0, total=0):
-            progress_queue.put({"message": message, "current": current, "total": total})
-
-        def run_task():
-            try:
-                if mode == "live":
-                    result = sync_from_live(iface, seconds, progress=progress_callback)
-                elif mode == "pcap":
-                    result = sync_from_pcap(path, progress=progress_callback)
-                elif mode == "divert":
-                    result = sync_from_divert(seconds, progress=progress_callback)
-                else:
-                    result = sync_from_export(payload.get("path") or None, progress=progress_callback)
-                progress_queue.put({"done": True, "result": result})
-                _sync_logger.info(
-                    "抓包同步完成：新增 %s，更新 %s，共 %s，标记放生 %s，来源 %s",
-                    result.get("new", 0),
-                    result.get("updated", 0),
-                    result.get("total", 0),
-                    result.get("released", 0),
-                    result.get("source", mode),
-                )
-            except Exception as exc:
-                _sync_logger.error("抓包同步失败: %s", exc)
-                progress_queue.put({"done": True, "error": str(exc)})
-            finally:
-                _end_sync()
-
-        threading.Thread(target=run_task, daemon=True).start()
-        while True:
-            try:
-                msg = progress_queue.get(timeout=60)
-            except queue.Empty:
-                yield f"data: {json.dumps({'message': '心跳...', 'current': 0, 'total': 0})}\n\n"
-                continue
-            if msg.get("done"):
-                if msg.get("error"):
-                    yield f"data: {json.dumps({'error': msg['error']}, ensure_ascii=False)}\n\n"
-                else:
-                    yield f"data: {json.dumps({'done': True, 'result': msg.get('result', {})}, ensure_ascii=False)}\n\n"
-                break
-            yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
-
-
 @app.get("/api/refresh_time")
 def get_refresh_time():
     """Get the stored pet refresh time."""
@@ -2293,20 +2208,18 @@ def api_import_packet_exports():
 
 @app.post("/api/packets/record")
 def api_record_packets(payload: Optional[dict] = Body(default=None)):
-    """改道抓包或回放 pcap，只把解密后的消息记到抓包页，不改精灵库。"""
+    """改道记录游戏消息。抓到精灵列表时写入仓库。也可回放 pcap。"""
     from scripts.packet_store import record_divert, record_live
 
     payload = payload or {}
     mode = str(payload.get("mode") or "divert")
-    if mode not in ("live", "pcap", "divert"):
-        raise HTTPException(status_code=400, detail="mode 只能是 live、pcap 或 divert")
+    if mode not in ("pcap", "divert"):
+        raise HTTPException(status_code=400, detail="mode 只能是 divert 或 pcap")
     iface = str(payload.get("iface") or "")
     seconds = int(payload.get("seconds") or 120)
     path = str(payload.get("path") or "")
     label = f"抓包记录 mode={mode}"
-    if mode == "live":
-        label += f" iface={iface or '未指定'} seconds={seconds}"
-    elif mode == "divert":
+    if mode == "divert":
         label += f" seconds={seconds}"
     else:
         label += f" path={path or '未指定'}"

@@ -92,19 +92,37 @@ def _strip_trailer(plain: bytes) -> bytes | None:
     return plain[:-trailer_len]
 
 
-def open_s2c(key: bytes, body: bytes) -> tuple[int, bytes] | None:
-    """用固定 IV 解开 0x4013，再按 30 字节内部头取出 opcode 和载荷。"""
+def open_data(key: bytes, body: bytes, direction: str) -> tuple[int, bytes] | None:
+    """与 RocoMITM 相同：固定 IV 解密，去掉 tsf4g，再读 30 字节内部头。"""
     if len(key) != 16 or len(body) < 16 or len(body) % 16 != 0:
         return None
     plain = AES.new(key, AES.MODE_CBC, IV).decrypt(body)
     stripped = _strip_trailer(plain)
-    if stripped is None or len(stripped) < INTERNAL_HEADER_LEN:
+    if stripped is None or len(stripped) < INTERNAL_HEADER_LEN or stripped[4:6] != b"\x55\xaa":
         return None
-    if stripped[4:6] != b"\x55\xaa":
+    if direction == "c2s":
+        opcode = int.from_bytes(stripped[22:24], "big")
+    else:
+        opcode = int.from_bytes(stripped[16:20], "big") & 0xFFFF
+    if not opcode:
         return None
-    session_id = int.from_bytes(stripped[16:20], "big")
-    opcode = session_id & 0xFFFF
     return opcode, stripped[INTERNAL_HEADER_LEN:]
+
+
+def open_s2c(key: bytes, body: bytes) -> tuple[int, bytes] | None:
+    return open_data(key, body, "s2c")
+
+
+def describe_decrypt(key: bytes, body: bytes) -> str:
+    """第一包解不开时写进日志，不包含密钥。"""
+    if len(body) < 16 or len(body) % 16 != 0:
+        return f"0x4013 包体长度 {len(body)} 不能按 AES 块解密"
+    plain = AES.new(key, AES.MODE_CBC, IV).decrypt(body)
+    mark = plain[4:6].hex() if len(plain) >= 6 else ""
+    mark20 = plain[20:22].hex() if len(plain) >= 22 else ""
+    tail = plain[-8:].hex() if len(plain) >= 8 else plain.hex()
+    trailer = "有" if _strip_trailer(plain) is not None else "无"
+    return f"0x4013 解密后对不上明文。偏移4={mark} 偏移20={mark20} trailer={trailer} 尾部={tail}"
 
 
 class _ConnMap:
@@ -156,7 +174,7 @@ def _owner_pid(target_pid: int | None, cache: dict[tuple[str, int], tuple[int, f
     return found
 
 
-def run_relay(seconds: int, on_s2c, progress=None, stop_when=None) -> dict:
+def run_relay(seconds: int, on_s2c, progress=None, stop_when=None, on_frame=None) -> dict:
     """改道并转发，直到超时或 stop_when() 为真。on_s2c(opcode, payload) 收到解密后的下行。"""
     if not is_admin():
         raise RuntimeError("改道同步需要管理员权限。请用管理员身份重新启动仓库服务。")
@@ -170,7 +188,7 @@ def run_relay(seconds: int, on_s2c, progress=None, stop_when=None) -> dict:
     host = local_ipv4()
     conns = _ConnMap()
     stop = threading.Event()
-    stats = {"key": False, "s2c": 0, "pets": 0, "failed": 0, "flows": 0, "error": ""}
+    stats = {"key": False, "s2c": 0, "pets": 0, "failed": 0, "flows": 0, "error": "", "fail_reason": ""}
     key_box: dict[str, bytes | None] = {"key": None}
     sockets: list[socket.socket] = []
     sockets_lock = threading.Lock()
@@ -185,7 +203,13 @@ def run_relay(seconds: int, on_s2c, progress=None, stop_when=None) -> dict:
         with sockets_lock:
             sockets.append(sock)
 
+    def emit_frame(direction: str, command: int, opcode: int | None, payload: bytes, note: str) -> None:
+        if on_frame is None:
+            return
+        on_frame(direction, command, opcode, payload, note)
+
     def observe(pkt: bytes, direction: str) -> None:
+        command = int.from_bytes(pkt[6:8], "big") if len(pkt) >= 8 else 0
         if direction == "s2c":
             found = ack_key(pkt)
             if found is not None:
@@ -193,23 +217,32 @@ def run_relay(seconds: int, on_s2c, progress=None, stop_when=None) -> dict:
                 stats["key"] = True
                 FileKeyStore(KEY_DIR).save_key("divert", found)
                 report("已从 0x1002 拿到会话密钥，并写入 latest.key")
+                emit_frame(direction, 0x1002, None, b"", "会话密钥")
                 return
-        if int.from_bytes(pkt[6:8], "big") != 0x4013 or direction != "s2c":
+        if command != 0x4013:
+            if command:
+                emit_frame(direction, command, None, b"", "")
             return
         key = key_box["key"]
         if key is None:
+            emit_frame(direction, command, None, b"", "还没有密钥")
             return
         head_len = int.from_bytes(pkt[13:17], "big")
         body_len = int.from_bytes(pkt[17:21], "big")
         body = pkt[head_len : head_len + body_len]
-        opened = open_s2c(key, body)
+        opened = open_data(key, body, direction)
         if opened is None:
             stats["failed"] += 1
+            if not stats["fail_reason"]:
+                stats["fail_reason"] = describe_decrypt(key, body)
+                report(stats["fail_reason"])
+            emit_frame(direction, command, None, b"", "解密失败")
             return
         opcode, payload = opened
         stats["s2c"] += 1
         if opcode == 0x1346:
             stats["pets"] += 1
+        emit_frame(direction, command, opcode, payload, "")
         on_s2c(opcode, payload)
         if stop_when is not None and stop_when():
             report("精灵列表已齐，结束改道。当前这局游戏连接会断开。")

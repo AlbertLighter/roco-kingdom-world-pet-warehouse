@@ -95,7 +95,7 @@ def _summary(opcode: int, body: bytes) -> str:
     return f"宠物列表 第 {decoded.get('req_page', '?')}/{decoded.get('total_page', '?')} 页，{len(pets)} 只"
 
 
-def record_message(message, source: str = "live") -> int | None:
+def record_message(message, source: str = "live", summary: str | None = None) -> int | None:
     body = bytes(getattr(message, "app_body", b"") or b"")
     truncated = 0
     if len(body) > MAX_BODY:
@@ -124,7 +124,7 @@ def record_message(message, source: str = "live") -> int | None:
                         len(bytes(getattr(message, "app_body", b"") or b"")),
                         truncated,
                         body.hex(),
-                        _summary(opcode, body),
+                        summary or _summary(opcode, body),
                     ),
                 )
                 _trim(conn)
@@ -369,19 +369,54 @@ def record_divert(seconds: int = 120, progress=None) -> dict:
         _sync_logger.info("抓包 %s", message)
         report(message, current, total)
 
-    def on_s2c(opcode: int, payload: bytes) -> None:
-        message = Message("s2c", opcode, "divert", payload, payload)
-        if record_message(message, source="divert"):
+    from scripts.capture_sync import PET_LIST_OPCODE, PetPageCollector, pet_record, upsert_pets
+    from scripts.rocom_pet import parse_pet_list
+
+    collector = PetPageCollector()
+    sync_result = {"new": 0, "updated": 0, "total": 0, "released": 0}
+    marked = {"done": False}
+
+    def on_frame(direction: str, command: int, opcode: int | None, payload: bytes, note: str) -> None:
+        shown = opcode if opcode is not None else command
+        text = note or None
+        message = Message(direction, shown, "divert", payload, payload)
+        if record_message(message, source="divert", summary=text):
             saved["n"] += 1
             if saved["n"] == 1 or saved["n"] % 25 == 0:
                 emit(f"已记录 {saved['n']} 条", saved["n"], 0)
+        if direction != "s2c" or opcode != PET_LIST_OPCODE or not payload:
+            return
+        decoded = parse_pet_list(payload)
+        added = collector.add_decoded(decoded)
+        records = [row for pet in (decoded.get("pet_info") or {}).get("pet_data") or [] if (row := pet_record(pet))]
+        if not records:
+            return
+        complete = collector.is_complete() and not marked["done"]
+        if complete:
+            marked["done"] = True
+            all_records, _done = collector.snapshot()
+            result = upsert_pets(all_records, mark_missing=True, progress=emit)
+        else:
+            result = upsert_pets(records, mark_missing=False, progress=emit)
+        sync_result["new"] += result.get("new", 0)
+        sync_result["updated"] += result.get("updated", 0)
+        sync_result["released"] = result.get("released", 0)
+        count, pages, total_page = collector.status()
+        sync_result["total"] = count
+        emit(
+            f"精灵列表 +{added}，已写入仓库：新增 {result.get('new', 0)}，更新 {result.get('updated', 0)}，页 {pages}/{total_page or '?'}",
+            count,
+            total_page,
+        )
 
-    emit("正在把游戏的 8195 改道到本机。请在这之后进入游戏。")
-    stats = run_relay(seconds, on_s2c, progress=emit)
+    emit("正在把游戏的 8195 改道到本机。请在这之后进入游戏。抓到精灵列表会自动写入仓库。")
+    stats = run_relay(seconds, lambda _opcode, _payload: None, progress=emit, on_frame=on_frame)
     summary = (
         f"改道记录 密钥={'有' if stats.get('key') else '无'}，"
         f"下行 {stats.get('s2c', 0)}，解密失败 {stats.get('failed', 0)}"
     )
+    if stats.get("fail_reason"):
+        summary = f"{summary}。{stats['fail_reason']}"
     emit(summary, saved["n"], saved["n"])
     if saved["n"] == 0 and not stats.get("key"):
         emit("没有拿到 0x1002 会话密钥。用管理员启动服务，先点改道记录，再进入游戏。", 0, 0)
@@ -391,11 +426,12 @@ def record_divert(seconds: int = 120, progress=None) -> dict:
         "no_key": 0 if stats.get("key") else 1,
         "bad_key": stats.get("failed", 0),
         "summary": summary,
+        "sync": sync_result if sync_result.get("total") else None,
     }
 
 
 def record_live(mode: str, iface: str = "", seconds: int = 120, pcap: str = "", progress=None) -> dict:
-    """旁路抓包或回放，只记解密后的消息。"""
+    """回放 pcap，只记解密后的消息。"""
     from scripts.rocom_capture import Engine, FileKeyStore, read_pcap
 
     def report(message, current=0, total=0):
@@ -420,40 +456,14 @@ def record_live(mode: str, iface: str = "", seconds: int = 120, pcap: str = "", 
         on_message=on_message,
         log=lambda message: emit(message, saved["n"], 0),
     )
-    if mode == "pcap":
-        path = Path(pcap)
-        if not path.is_file():
-            raise FileNotFoundError(f"pcap 不存在: {path}")
-        emit(f"回放 {path}", 0, 0)
-        for packet in read_pcap(path):
-            engine.feed(packet)
-    else:
-        if not iface:
-            raise ValueError("要指定网卡名，例如 以太网")
-        seconds = max(10, min(int(seconds), 600))
-        from scapy.all import AsyncSniffer
-
-        emit(f"开始记录 iface={iface} filter=tcp port 8195 seconds={seconds}", 0, 0)
-        sniffer = AsyncSniffer(iface=iface, store=False, prn=engine.feed, filter="tcp port 8195")
-        sniffer.start()
-        deadline = time.time() + seconds
-        last = -1
-        last_summary = ""
-        last_summary_at = 0.0
-        try:
-            while time.time() < deadline:
-                if saved["n"] != last:
-                    emit(f"已记录 {saved['n']} 条", saved["n"], 0)
-                    last = saved["n"]
-                now = time.time()
-                summary = engine.summary()
-                if summary != last_summary and now - last_summary_at >= 5:
-                    emit(summary, saved["n"], 0)
-                    last_summary = summary
-                    last_summary_at = now
-                time.sleep(0.5)
-        finally:
-            sniffer.stop()
+    if mode != "pcap":
+        raise ValueError("实时记录只走改道。回放请使用 pcap。")
+    path = Path(pcap)
+    if not path.is_file():
+        raise FileNotFoundError(f"pcap 不存在: {path}")
+    emit(f"回放 {path}", 0, 0)
+    for packet in read_pcap(path):
+        engine.feed(packet)
     summary = engine.summary()
     emit(summary, saved["n"], saved["n"])
     if saved["n"] == 0:
