@@ -2206,6 +2206,14 @@ def api_import_packet_exports():
         raise HTTPException(status_code=404, detail=str(exc))
 
 
+@app.post("/api/packets/stop")
+def api_stop_packets():
+    """结束当前不限时的改道记录。"""
+    from scripts.game_relay import stop_relay
+
+    return {"stopped": stop_relay()}
+
+
 @app.post("/api/packets/record")
 def api_record_packets(payload: Optional[dict] = Body(default=None)):
     """改道记录游戏消息。抓到精灵列表时写入仓库。也可回放 pcap。"""
@@ -2216,12 +2224,9 @@ def api_record_packets(payload: Optional[dict] = Body(default=None)):
     if mode not in ("pcap", "divert"):
         raise HTTPException(status_code=400, detail="mode 只能是 divert 或 pcap")
     iface = str(payload.get("iface") or "")
-    seconds = int(payload.get("seconds") or 120)
     path = str(payload.get("path") or "")
     label = f"抓包记录 mode={mode}"
-    if mode == "divert":
-        label += f" seconds={seconds}"
-    else:
+    if mode != "divert":
         label += f" path={path or '未指定'}"
     if not _begin_sync(label):
         raise HTTPException(status_code=409, detail="同步任务正在运行中")
@@ -2235,12 +2240,11 @@ def api_record_packets(payload: Optional[dict] = Body(default=None)):
         def run_task():
             try:
                 if mode == "divert":
-                    result = record_divert(seconds, progress=progress_callback)
+                    result = record_divert(progress=progress_callback)
                 else:
                     result = record_live(
                         mode,
                         iface=iface,
-                        seconds=seconds,
                         pcap=path,
                         progress=progress_callback,
                     )

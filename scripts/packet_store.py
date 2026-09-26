@@ -354,7 +354,7 @@ def import_export_file(path: Path) -> int:
     return saved
 
 
-def record_divert(seconds: int = 120, progress=None) -> dict:
+def record_divert(seconds: int | None = None, progress=None) -> dict:
     """改道读取游戏连接，只把解密后的下行消息记到抓包页。"""
     from scripts.game_relay import run_relay
     from scripts.rocom_capture import Message
@@ -409,7 +409,7 @@ def record_divert(seconds: int = 120, progress=None) -> dict:
             total_page,
         )
 
-    emit("正在把游戏的 8195 改道到本机。请在这之后进入游戏。抓到精灵列表会自动写入仓库。")
+    emit("正在把游戏的 8195 改道到本机。请在这之后进入游戏。抓到精灵列表会自动写入仓库。点停止记录后结束。")
     stats = run_relay(seconds, lambda _opcode, _payload: None, progress=emit, on_frame=on_frame)
     summary = (
         f"改道记录 密钥={'有' if stats.get('key') else '无'}，"

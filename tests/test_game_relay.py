@@ -49,6 +49,24 @@ class GameRelayParseTests(unittest.TestCase):
         self.assertEqual(opcode, 0x1346)
         self.assertEqual(body, payload)
 
+    def test_open_s2c_skips_sixteen_byte_prefix(self):
+        key = b"0123456789abcdef"
+        payload = b"pet-body"
+        record = bytearray(10 + len(payload))
+        record[0:4] = (0x1346).to_bytes(4, "big")
+        record[4:6] = b"\x55\xaa"
+        record[10:] = payload
+        raw = (b"\x00\x26" + b"\x11" * 14) + bytes(record)
+        rem = len(raw) % 16
+        trailer_len = 16 - rem if rem <= 10 else 32 - rem
+        trailer = b"\x00" * (trailer_len - 6) + b"tsf4g" + bytes([trailer_len])
+        encrypted = AES.new(key, AES.MODE_CBC, IV).encrypt(raw + trailer)
+        opened = open_s2c(key, encrypted)
+        self.assertIsNotNone(opened)
+        opcode, body = opened
+        self.assertEqual(opcode, 0x1346)
+        self.assertEqual(body, payload)
+
 
 if __name__ == "__main__":
     unittest.main()

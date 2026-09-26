@@ -26,6 +26,16 @@ ACK_KEY_OFFSET = 0x17
 INTERNAL_HEADER_LEN = 30
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 KEY_DIR = PROJECT_ROOT / "captures" / "keys"
+_active_stop: threading.Event | None = None
+
+
+def stop_relay() -> bool:
+    """请求结束当前改道。没有正在进行的改道时返回 False。"""
+    event = _active_stop
+    if event is None:
+        return False
+    event.set()
+    return True
 
 
 def is_admin() -> bool:
@@ -92,21 +102,47 @@ def _strip_trailer(plain: bytes) -> bytes | None:
     return plain[:-trailer_len]
 
 
+def _payload_without_trailer(payload: bytes) -> bytes:
+    stripped = _strip_trailer(payload)
+    return payload if stripped is None else stripped
+
+
+def _read_internal(view: bytes, direction: str) -> tuple[int, bytes] | None:
+    """30 字节内部头：偏移 4 是 55 aa，下行 opcode 在会话号的低 16 位。"""
+    if len(view) < INTERNAL_HEADER_LEN or view[4:6] != b"\x55\xaa":
+        return None
+    if direction == "c2s":
+        opcode = int.from_bytes(view[22:24], "big")
+    else:
+        opcode = int.from_bytes(view[16:20], "big") & 0xFFFF
+    if not opcode:
+        return None
+    return opcode, view[INTERNAL_HEADER_LEN:]
+
+
+def _read_live_s2c(view: bytes) -> tuple[int, bytes] | None:
+    """16 字节信封之后的下行头：前 4 字节是 opcode，紧接着是 55 aa，载荷从偏移 10 开始。"""
+    if len(view) < 10 or view[4:6] != b"\x55\xaa":
+        return None
+    opcode = int.from_bytes(view[0:4], "big")
+    if opcode <= 0 or opcode > 0xFFFF:
+        return None
+    return opcode, _payload_without_trailer(view[10:])
+
+
 def open_data(key: bytes, body: bytes, direction: str) -> tuple[int, bytes] | None:
-    """与 RocoMITM 相同：固定 IV 解密，去掉 tsf4g，再读 30 字节内部头。"""
+    """固定 IV 解密并去掉 tsf4g。下行内部头有时在 16 字节信封之后。"""
     if len(key) != 16 or len(body) < 16 or len(body) % 16 != 0:
         return None
     plain = AES.new(key, AES.MODE_CBC, IV).decrypt(body)
     stripped = _strip_trailer(plain)
-    if stripped is None or len(stripped) < INTERNAL_HEADER_LEN or stripped[4:6] != b"\x55\xaa":
+    if stripped is None:
         return None
-    if direction == "c2s":
-        opcode = int.from_bytes(stripped[22:24], "big")
-    else:
-        opcode = int.from_bytes(stripped[16:20], "big") & 0xFFFF
-    if not opcode:
-        return None
-    return opcode, stripped[INTERNAL_HEADER_LEN:]
+    if direction == "s2c" and len(stripped) >= 26 and stripped[20:22] == b"\x55\xaa":
+        opened = _read_live_s2c(stripped[16:])
+        if opened is not None:
+            return opened
+    return _read_internal(stripped, direction)
 
 
 def open_s2c(key: bytes, body: bytes) -> tuple[int, bytes] | None:
@@ -174,8 +210,9 @@ def _owner_pid(target_pid: int | None, cache: dict[tuple[str, int], tuple[int, f
     return found
 
 
-def run_relay(seconds: int, on_s2c, progress=None, stop_when=None, on_frame=None) -> dict:
-    """改道并转发，直到超时或 stop_when() 为真。on_s2c(opcode, payload) 收到解密后的下行。"""
+def run_relay(seconds: int | None, on_s2c, progress=None, stop_when=None, on_frame=None) -> dict:
+    """改道并转发，直到调用 stop_relay 或 stop_when() 为真。seconds 为空则不限时。"""
+    global _active_stop
     if not is_admin():
         raise RuntimeError("改道同步需要管理员权限。请用管理员身份重新启动仓库服务。")
     try:
@@ -184,10 +221,11 @@ def run_relay(seconds: int, on_s2c, progress=None, stop_when=None, on_frame=None
     except ImportError as exc:
         raise RuntimeError("改道同步需要 pydivert 和 psutil。在项目根目录执行 uv sync --extra capture") from exc
 
-    seconds = max(10, min(int(seconds), 600))
+    deadline = None if seconds is None else time.time() + max(10, min(int(seconds), 600))
     host = local_ipv4()
     conns = _ConnMap()
     stop = threading.Event()
+    _active_stop = stop
     stats = {"key": False, "s2c": 0, "pets": 0, "failed": 0, "flows": 0, "error": "", "fail_reason": ""}
     key_box: dict[str, bytes | None] = {"key": None}
     sockets: list[socket.socket] = []
@@ -396,14 +434,17 @@ def run_relay(seconds: int, on_s2c, progress=None, stop_when=None, on_frame=None
         time.sleep(0.05)
     if stats["error"]:
         shutdown()
+        _active_stop = None
         raise RuntimeError(stats["error"])
     threading.Thread(target=divert, daemon=True).start()
-    deadline = time.time() + seconds
     try:
-        while time.time() < deadline and not stop.is_set():
+        while not stop.is_set():
+            if deadline is not None and time.time() >= deadline:
+                break
             time.sleep(0.5)
     finally:
         shutdown()
+        _active_stop = None
     if stats["error"]:
         raise RuntimeError(stats["error"])
     return stats

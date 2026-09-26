@@ -173,15 +173,22 @@ document.getElementById("importBtn").addEventListener("click", async () => {
 });
 
 document.getElementById("recordBtn").addEventListener("click", async () => {
+    const recordBtn = document.getElementById("recordBtn");
+    if (recordBtn.dataset.recording === "1") {
+        recordBtn.disabled = true;
+        await fetch("/api/packets/stop", { method: "POST" });
+        return;
+    }
+    recordBtn.dataset.recording = "1";
+    recordBtn.textContent = "停止记录";
+    recordBtn.style.background = "#c0392b";
     setBusy(true);
+    recordBtn.disabled = false;
     try {
         const result = await readSse("/api/packets/record", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                mode: "divert",
-                seconds: Number(document.getElementById("seconds").value) || 120,
-            }),
+            body: JSON.stringify({ mode: "divert" }),
         });
         const sync = result.sync;
         jobLog.textContent = sync
@@ -192,6 +199,9 @@ document.getElementById("recordBtn").addEventListener("click", async () => {
     } catch (error) {
         jobLog.textContent = error.message;
     }
+    recordBtn.dataset.recording = "0";
+    recordBtn.textContent = "改道记录";
+    recordBtn.style.background = "#b9770e";
     setBusy(false);
 });
 
