@@ -5,7 +5,7 @@ from pathlib import Path
 from Crypto.Cipher import AES
 
 from scripts.rocom_capture import Engine, FileKeyStore
-from scripts.rocom_gcp import decrypt_data, deframe, extract_key, valid_plain
+from scripts.rocom_gcp import IVDECODER_AES_IV, decrypt_data, decrypt_matching, deframe, extract_key, valid_plain
 from scripts.rocom_pet import parse_pet_list
 
 
@@ -125,6 +125,51 @@ class RocomPortTests(unittest.TestCase):
         self.assertEqual(pet["attribute_info"]["hp"]["base_value"], 310)
         self.assertEqual(pet["skill"]["skill_data"][0]["id"], 222)
         self.assertEqual(pet["skill_dam_type"], [5])
+
+    def test_data_before_key_is_counted(self):
+        engine = Engine()
+        data = _gcp(0x4013, 1, b"", b"\x00" * 32)
+        engine.feed_segment("10.0.0.8", 40000, "1.2.3.4", 8195, 1, data)
+        self.assertEqual(engine.tcp_segments, 1)
+        self.assertEqual(engine.no_key, 1)
+        self.assertEqual(engine.key_frames, 0)
+        self.assertIn("1.2.3.4:8195", engine.summary())
+        self.assertIn("0x1002", engine.failure_hint())
+
+    def test_latest_key_applies_to_a_new_connection(self):
+        import tempfile
+
+        key = b"0123456789abcdef"
+        plain = bytearray(32)
+        plain[2:4] = (0x1346).to_bytes(2, "big")
+        plain[4:6] = b"\x55\xaa"
+        blob = (b"\x11" * 16) + bytes(plain)
+        blob += b"\x00" * ((-len(blob)) % 16)
+        encrypted = AES.new(key, AES.MODE_CBC, IVDECODER_AES_IV).encrypt(blob)
+        self.assertEqual(decrypt_matching(key, encrypted, "s2c"), bytes(plain))
+
+        with tempfile.TemporaryDirectory() as temp:
+            store = FileKeyStore(Path(temp))
+            first = Engine(keys=store)
+            ack = _gcp(0x1002, 1, b"\xab\xcd" + key, b"")
+            first.feed_segment("10.0.0.8", 40000, "1.2.3.4", 8195, 1, ack)
+            seen = []
+            second = Engine(keys=store, on_message=seen.append)
+            data = _gcp(0x4013, 2, b"", encrypted)
+            second.feed_segment("1.2.3.4", 8195, "10.0.0.9", 40001, 10, data)
+            self.assertEqual(len(seen), 1)
+            self.assertEqual(seen[0].opcode, 0x1346)
+            self.assertTrue(store.latest_path().is_file())
+
+    def test_late_ack_still_yields_key(self):
+        key = bytes(range(16))
+        ack = _gcp(0x1002, 1, b"\x00\x00" + key, b"")
+        engine = Engine()
+        engine.feed_segment("1.2.3.4", 8195, "10.0.0.8", 40000, 5000, b"\x33\x66" + b"\x00" * 40)
+        engine.feed_segment("1.2.3.4", 8195, "10.0.0.8", 40000, 1000, ack)
+        self.assertEqual(engine.key_frames, 1)
+        flow = next(iter(engine.flows.values()))
+        self.assertEqual(flow.session.key, key)
 
     def test_cached_key_survives_restart(self):
         import tempfile

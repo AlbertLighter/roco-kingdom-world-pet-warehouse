@@ -13,6 +13,7 @@ KEY_OFFSET = 2
 KEY_LEN = 16
 MAGIC = b"\x33\x66"
 FIXED_AES_IV = b"\x00" * 16
+IVDECODER_AES_IV = bytes(range(16))
 S2C_MARKER = b"\x55\xaa"
 S2C_BODY_OFFSET = 10
 S2C_OPCODE_OFFSET = 2
@@ -78,16 +79,36 @@ def extract_key(header_extra: bytes) -> bytes | None:
     return bytes(header_extra[KEY_OFFSET:end])
 
 
+def _cbc(key: bytes, iv: bytes, body: bytes) -> bytes:
+    return AES.new(key, AES.MODE_CBC, iv).decrypt(body)
+
+
 def decrypt_data(key: bytes, body: bytes) -> bytes | None:
     """AES-CBC。长度允许时用包内 IV，否则用全零 IV。不剥填充。"""
     if len(key) != KEY_LEN:
         return None
     if len(body) >= 32 and (len(body) - 16) % 16 == 0:
-        cipher = AES.new(key, AES.MODE_CBC, body[:16])
-        return cipher.decrypt(body[16:])
+        return _cbc(key, body[:16], body[16:])
     if len(body) >= 16 and len(body) % 16 == 0:
-        cipher = AES.new(key, AES.MODE_CBC, FIXED_AES_IV)
-        return cipher.decrypt(body)
+        return _cbc(key, FIXED_AES_IV, body)
+    return None
+
+
+def decrypt_matching(key: bytes, body: bytes, direction: str) -> bytes | None:
+    """依次试包内 IV、RKPP 固定 IV、全零 IV。RKPP 的明文从偏移 16 才是应用层。"""
+    if len(key) != KEY_LEN or len(body) < 16 or len(body) % 16 != 0:
+        return None
+    candidates: list[bytes] = []
+    if len(body) >= 32:
+        candidates.append(_cbc(key, body[:16], body[16:]))
+    full = _cbc(key, IVDECODER_AES_IV, body)
+    if len(full) > 16:
+        candidates.append(full[16:])
+    candidates.append(full)
+    candidates.append(_cbc(key, FIXED_AES_IV, body))
+    for plain in candidates:
+        if valid_plain(direction, plain):
+            return plain
     return None
 
 

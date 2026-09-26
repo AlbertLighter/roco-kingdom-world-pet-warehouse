@@ -35,11 +35,39 @@ GATEWAY_URL = f"https://morefun.game.qq.com/gw2/gateway/v1/?X-Mcube-Act-Id={X_MC
 DIRECT_LOGIN_URL = "https://morefun.game.qq.com/oauth/v1/direct-login"
 BASE_INFO_URL_TEMPLATE = "https://rocom.qq.com/cp/rocom_game_manager_json/prod/sprite/base_info/{baseid}.json"
 
+
+def _credential_shape() -> str:
+    """只记凭证是否存在和长度，不记内容。"""
+
+    def one(name: str, value: str | None) -> str:
+        if not value:
+            return f"{name}=空"
+        return f"{name}=长度{len(value)}"
+
+    return " ".join([
+        one("openid", OPENID),
+        one("access_token", ACCESS_TOKEN),
+        one("refresh_token", REFRESH_TOKEN),
+        one("authorization", AUTHORIZATION_TOKEN),
+    ])
+
+
+def _redact(text: str) -> str:
+    redacted = text
+    for secret in (ACCESS_TOKEN, REFRESH_TOKEN, AUTHORIZATION_TOKEN, OPENID):
+        if secret and len(secret) >= 6:
+            redacted = redacted.replace(secret, "***")
+    redacted = redacted.replace("\n", " ")
+    if len(redacted) > 300:
+        return redacted[:300] + "…"
+    return redacted
+
+
 def direct_login():
     """Refreshes the AUTHORIZATION_TOKEN using ACCESS_TOKEN and REFRESH_TOKEN."""
     global AUTHORIZATION_TOKEN
     if not ACCESS_TOKEN or not REFRESH_TOKEN:
-        _api_logger.warning("缺少 ACCESS_TOKEN 或 REFRESH_TOKEN")
+        _api_logger.warning("缺少 ACCESS_TOKEN 或 REFRESH_TOKEN。%s", _credential_shape())
         return False
         
     payload = {
@@ -55,20 +83,33 @@ def direct_login():
     }
     
     try:
-        _api_logger.info("正在刷新登录会话...")
+        _api_logger.info(
+            "正在刷新登录会话... %s %s",
+            "走代理" if PROXIES else "直连",
+            _credential_shape(),
+        )
         response = requests.post(DIRECT_LOGIN_URL, json=payload, headers=headers, proxies=PROXIES, verify=REQUESTS_VERIFY, timeout=TIMEOUT)
         response.raise_for_status()
         res_json = response.json()
         if res_json.get("code") == 0:
             new_token = res_json["data"]["fd_token"]
             AUTHORIZATION_TOKEN = new_token
-            _api_logger.info("登录会话刷新成功")
+            _api_logger.info("登录会话刷新成功，authorization=长度%s", len(new_token or ""))
             return True
-        else:
-            _api_logger.warning(f"登录刷新失败: {res_json.get('msg')}")
-            return False
+        _api_logger.warning(
+            "登录刷新失败: http=%s code=%s msg=%s 响应字段=%s %s",
+            response.status_code,
+            res_json.get("code"),
+            res_json.get("msg"),
+            ",".join(sorted(str(key) for key in res_json.keys())),
+            _credential_shape(),
+        )
+        return False
     except Exception as e:
-        _api_logger.error(f"登录刷新请求失败: {e}")
+        resp = getattr(e, "response", None)
+        status = getattr(resp, "status_code", None)
+        body = _redact(getattr(resp, "text", "") or "") if resp is not None else ""
+        _api_logger.error("登录刷新请求失败: %s http=%s body=%s %s", e, status, body, _credential_shape())
         return False
 
 def gateway_request(req_path, req_param, req_type="POST", retry=True):
@@ -100,14 +141,19 @@ def gateway_request(req_path, req_param, req_type="POST", retry=True):
         
         # Handle expired session
         if res_json.get("code") == 4001 and retry:
-            _api_logger.warning("登录会话过期，正在自动刷新...")
+            _api_logger.warning("登录会话过期，正在自动刷新... path=%s", req_path)
             if direct_login():
                 return gateway_request(req_path, req_param, req_type=req_type, retry=False)
-                
+            _api_logger.warning("登录刷新未成功，不再重试 path=%s", req_path)
+
         if res_json.get("code") != 0:
-            _api_logger.warning(f"API {req_path} 错误: {res_json.get('msg')}")
-            if response.status_code != 200:
-                _api_logger.warning(f"HTTP 状态码: {response.status_code}")
+            _api_logger.warning(
+                "API %s 错误: http=%s code=%s msg=%s",
+                req_path,
+                response.status_code,
+                res_json.get("code"),
+                res_json.get("msg"),
+            )
             return None
         return res_json.get("data")
     except Exception as e:

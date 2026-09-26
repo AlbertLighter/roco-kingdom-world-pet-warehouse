@@ -316,7 +316,40 @@ app = FastAPI(lifespan=lifespan)
 
 # Global lock to prevent concurrent sync runs
 _sync_lock = threading.Lock()
+_sync_meta = threading.Lock()
+_sync_holder = {"name": "", "since": 0.0}
 _gender_sync_lock = threading.Lock()
+
+
+def _begin_sync(name: str) -> bool:
+    """占用同步锁。失败时记下当前占用者和已运行秒数。"""
+    with _sync_meta:
+        if not _sync_lock.acquire(blocking=False):
+            held = _sync_holder["name"] or "未知任务"
+            since = _sync_holder["since"]
+            elapsed = time.time() - since if since else 0
+            _sync_logger.warning(
+                "拒绝启动 %s：已有任务在运行（%s，已进行 %.0f 秒）",
+                name,
+                held,
+                elapsed,
+            )
+            return False
+        _sync_holder["name"] = name
+        _sync_holder["since"] = time.time()
+    _sync_logger.info("任务开始：%s", name)
+    return True
+
+
+def _end_sync() -> None:
+    with _sync_meta:
+        name = _sync_holder["name"] or "未知任务"
+        since = _sync_holder["since"]
+        elapsed = time.time() - since if since else 0
+        _sync_holder["name"] = ""
+        _sync_holder["since"] = 0.0
+    _sync_lock.release()
+    _sync_logger.info("任务结束：%s，用时 %.1f 秒", name, elapsed)
 
 # 允许跨域
 app.add_middleware(
@@ -1713,8 +1746,7 @@ def check_breeding_slots():
 @app.post("/api/sync")
 def sync_pets():
     """Stream pet sync progress via SSE."""
-    if not _sync_lock.acquire(blocking=False):
-        _sync_logger.warning("同步被拒绝：已有任务在运行")
+    if not _begin_sync("API 同步精灵"):
         raise HTTPException(status_code=409, detail="同步任务正在运行中")
 
     def event_stream():
@@ -1731,17 +1763,28 @@ def sync_pets():
             try:
                 from scripts.fetcher import run_sync
                 result = run_sync(progress_callback=progress_callback)
-                progress_queue.put({"done": True, "result": result})
-                _sync_logger.info(f"同步完成：新增 {result.get('new', 0)} 只，更新 {result.get('updated', 0)} 只，共 {result.get('total', 0)} 只")
-                fail_count = result.get("fail_count", 0)
-                if fail_count:
-                    for detail in result.get("fail_details", []):
-                        _sync_logger.warning(f"  同步失败 -> {detail}")
+                if result.get("aborted"):
+                    message = result.get("error") or "同步中止"
+                    _sync_logger.error(message)
+                    progress_queue.put({"done": True, "error": message})
+                else:
+                    progress_queue.put({"done": True, "result": result})
+                    _sync_logger.info(
+                        "同步完成：新增 %s 只，更新 %s 只，共 %s 只，标记放生 %s 只",
+                        result.get("new", 0),
+                        result.get("updated", 0),
+                        result.get("total", 0),
+                        result.get("released", 0),
+                    )
+                    fail_count = result.get("fail_count", 0)
+                    if fail_count:
+                        for detail in result.get("fail_details", []):
+                            _sync_logger.warning(f"  同步失败 -> {detail}")
             except Exception as e:
                 _sync_logger.error(f"同步失败: {e}")
                 progress_queue.put({"done": True, "error": str(e)})
             finally:
-                _sync_lock.release()
+                _end_sync()
 
         thread = threading.Thread(target=run_sync_task, daemon=True)
         thread.start()
@@ -1792,8 +1835,17 @@ def sync_capture(payload: Optional[dict] = Body(default=None)):
     mode = str(payload.get("mode") or "export")
     if mode not in ("export", "live", "pcap"):
         raise HTTPException(status_code=400, detail="mode 只能是 export、live 或 pcap")
-    if not _sync_lock.acquire(blocking=False):
-        _sync_logger.warning("抓包同步被拒绝：已有任务在运行")
+    iface = str(payload.get("iface") or "")
+    seconds = int(payload.get("seconds") or 120)
+    path = str(payload.get("path") or "")
+    label = f"抓包同步 mode={mode}"
+    if mode == "live":
+        label += f" iface={iface or '未指定'} seconds={seconds}"
+    elif mode == "pcap":
+        label += f" path={path or '未指定'}"
+    else:
+        label += f" path={path or 'data/'}"
+    if not _begin_sync(label):
         raise HTTPException(status_code=409, detail="同步任务正在运行中")
 
     def event_stream():
@@ -1805,27 +1857,25 @@ def sync_capture(payload: Optional[dict] = Body(default=None)):
         def run_task():
             try:
                 if mode == "live":
-                    result = sync_from_live(
-                        str(payload.get("iface") or ""),
-                        int(payload.get("seconds") or 120),
-                        progress=progress_callback,
-                    )
+                    result = sync_from_live(iface, seconds, progress=progress_callback)
                 elif mode == "pcap":
-                    result = sync_from_pcap(str(payload.get("path") or ""), progress=progress_callback)
+                    result = sync_from_pcap(path, progress=progress_callback)
                 else:
                     result = sync_from_export(payload.get("path") or None, progress=progress_callback)
                 progress_queue.put({"done": True, "result": result})
                 _sync_logger.info(
-                    "抓包同步完成：新增 %s，更新 %s，共 %s",
+                    "抓包同步完成：新增 %s，更新 %s，共 %s，标记放生 %s，来源 %s",
                     result.get("new", 0),
                     result.get("updated", 0),
                     result.get("total", 0),
+                    result.get("released", 0),
+                    result.get("source", mode),
                 )
             except Exception as exc:
-                _sync_logger.error(f"抓包同步失败: {exc}")
+                _sync_logger.error("抓包同步失败: %s", exc)
                 progress_queue.put({"done": True, "error": str(exc)})
             finally:
-                _sync_lock.release()
+                _end_sync()
 
         threading.Thread(target=run_task, daemon=True).start()
         while True:
@@ -2205,7 +2255,7 @@ def api_apply_packet(message_id: int):
         raise HTTPException(status_code=404, detail="没有这条包")
     if int(item["opcode"]) != PET_LIST_OPCODE:
         raise HTTPException(status_code=400, detail="只有宠物列表包可以写入仓库")
-    if not _sync_lock.acquire(blocking=False):
+    if not _begin_sync(f"抓包写入精灵库 id={message_id}"):
         raise HTTPException(status_code=409, detail="同步任务正在运行中")
     try:
         body = bytes.fromhex(item.get("app_body_hex") or "")
@@ -2216,7 +2266,7 @@ def api_apply_packet(message_id: int):
             raise HTTPException(status_code=400, detail="这一页里没有精灵")
         return upsert_pets(records, mark_missing=False)
     finally:
-        _sync_lock.release()
+        _end_sync()
 
 
 @app.delete("/api/packets")
@@ -2246,7 +2296,15 @@ def api_record_packets(payload: Optional[dict] = Body(default=None)):
     mode = str(payload.get("mode") or "live")
     if mode not in ("live", "pcap"):
         raise HTTPException(status_code=400, detail="mode 只能是 live 或 pcap")
-    if not _sync_lock.acquire(blocking=False):
+    iface = str(payload.get("iface") or "")
+    seconds = int(payload.get("seconds") or 120)
+    path = str(payload.get("path") or "")
+    label = f"抓包记录 mode={mode}"
+    if mode == "live":
+        label += f" iface={iface or '未指定'} seconds={seconds}"
+    else:
+        label += f" path={path or '未指定'}"
+    if not _begin_sync(label):
         raise HTTPException(status_code=409, detail="同步任务正在运行中")
 
     def event_stream():
@@ -2259,17 +2317,24 @@ def api_record_packets(payload: Optional[dict] = Body(default=None)):
             try:
                 result = record_live(
                     mode,
-                    iface=str(payload.get("iface") or ""),
-                    seconds=int(payload.get("seconds") or 120),
-                    pcap=str(payload.get("path") or ""),
+                    iface=iface,
+                    seconds=seconds,
+                    pcap=path,
                     progress=progress_callback,
                 )
                 progress_queue.put({"done": True, "result": result})
+                _sync_logger.info(
+                    "抓包记录完成：saved=%s no_key=%s bad_key=%s %s",
+                    result.get("saved", 0),
+                    result.get("no_key", 0),
+                    result.get("bad_key", 0),
+                    result.get("summary", ""),
+                )
             except Exception as exc:
-                _sync_logger.error(f"抓包记录失败: {exc}")
+                _sync_logger.error("抓包记录失败: %s", exc)
                 progress_queue.put({"done": True, "error": str(exc)})
             finally:
-                _sync_lock.release()
+                _end_sync()
 
         threading.Thread(target=run_task, daemon=True).start()
         while True:

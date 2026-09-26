@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import threading
 import time
@@ -19,6 +20,7 @@ MAX_BODY = 256 * 1024
 PET_LIST_OPCODE = 0x1346
 
 _LOCK = threading.Lock()
+_sync_logger = logging.getLogger("sync")
 
 OPCODE_NAMES = {
     0x0102: "ZoneLoginRsp",
@@ -362,23 +364,27 @@ def record_live(mode: str, iface: str = "", seconds: int = 120, pcap: str = "", 
 
     saved = {"n": 0}
 
+    def emit(message: str, current: int = 0, total: int = 0) -> None:
+        _sync_logger.info("抓包 %s", message)
+        report(message, current, total)
+
     def on_message(message) -> None:
         if record_message(message, source="pcap" if mode == "pcap" else "live"):
             saved["n"] += 1
             if saved["n"] == 1 or saved["n"] % 25 == 0:
-                report(f"已记录 {saved['n']} 条", saved["n"], 0)
+                emit(f"已记录 {saved['n']} 条", saved["n"], 0)
 
     engine = Engine(
         port=8195,
         keys=FileKeyStore(PROJECT_ROOT / "captures" / "keys"),
         on_message=on_message,
-        log=lambda message: report(message, saved["n"], 0),
+        log=lambda message: emit(message, saved["n"], 0),
     )
     if mode == "pcap":
         path = Path(pcap)
         if not path.is_file():
             raise FileNotFoundError(f"pcap 不存在: {path}")
-        report(f"回放 {path.name}", 0, 0)
+        emit(f"回放 {path}", 0, 0)
         for packet in read_pcap(path):
             engine.feed(packet)
     else:
@@ -387,21 +393,38 @@ def record_live(mode: str, iface: str = "", seconds: int = 120, pcap: str = "", 
         seconds = max(10, min(int(seconds), 600))
         from scapy.all import AsyncSniffer
 
-        report(f"在 {iface} 上记录 TCP 8195，最长 {seconds} 秒", 0, 0)
+        emit(f"开始记录 iface={iface} filter=tcp port 8195 seconds={seconds}", 0, 0)
         sniffer = AsyncSniffer(iface=iface, store=False, prn=engine.feed, filter="tcp port 8195")
         sniffer.start()
         deadline = time.time() + seconds
         last = -1
+        last_summary = ""
+        last_summary_at = 0.0
         try:
             while time.time() < deadline:
                 if saved["n"] != last:
-                    report(f"已记录 {saved['n']} 条", saved["n"], 0)
+                    emit(f"已记录 {saved['n']} 条", saved["n"], 0)
                     last = saved["n"]
+                now = time.time()
+                summary = engine.summary()
+                if summary != last_summary and now - last_summary_at >= 5:
+                    emit(summary, saved["n"], 0)
+                    last_summary = summary
+                    last_summary_at = now
                 time.sleep(0.5)
         finally:
             sniffer.stop()
-    report(f"记录结束，共 {saved['n']} 条", saved["n"], saved["n"])
-    return {"saved": saved["n"], "no_key": engine.no_key, "bad_key": engine.bad_key}
+    summary = engine.summary()
+    emit(summary, saved["n"], saved["n"])
+    if saved["n"] == 0:
+        emit(engine.failure_hint() or "没有解出应用层消息。", saved["n"], saved["n"])
+    emit(f"记录结束，共 {saved['n']} 条", saved["n"], saved["n"])
+    return {
+        "saved": saved["n"],
+        "no_key": engine.no_key,
+        "bad_key": engine.bad_key,
+        "summary": summary,
+    }
 
 
 def import_exports() -> dict:

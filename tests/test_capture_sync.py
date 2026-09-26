@@ -3,7 +3,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.capture_sync import PetPageCollector, decode_pet_name, pet_record, sync_from_export, upsert_pets
+from scripts.capture_sync import (
+    PetPageCollector,
+    decode_pet_name,
+    empty_capture_reason,
+    pet_record,
+    sync_from_export,
+    upsert_pets,
+)
+from scripts.rocom_capture import Engine
 from scripts.fetcher import init_db
 import scripts.fetcher as fetcher
 
@@ -58,6 +66,14 @@ class CaptureSyncTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp_dir.cleanup()
+
+    def test_empty_capture_reason_names_the_gap(self):
+        engine = Engine()
+        engine.tcp_segments = 4
+        engine.no_key = 4
+        text = empty_capture_reason(engine)
+        self.assertIn("0x1002", text)
+        self.assertIn("TCP段 4", text)
 
     def test_decode_name_and_record(self):
         self.assertEqual(decode_pet_name("e5b08fe8939de781b5"), "小蓝灵")

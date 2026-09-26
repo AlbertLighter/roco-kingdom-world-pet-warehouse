@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import time
 import sqlite3
@@ -26,6 +27,7 @@ CONF_DIR = os.path.join(PROJECT_ROOT, "roco_kingdom_world_conf")
 
 # 多线程工作线程数
 SYNC_WORKERS = int(os.getenv("SYNC_WORKERS", "1"))  # 同步精灵的并发线程数，从 .env 读取，默认串行拉取避免限频
+_sync_logger = logging.getLogger("sync")
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -318,6 +320,7 @@ def run_sync(progress_callback=None):
     all_api_serials = set()
 
     report("正在获取精灵列表...", 0, 0)
+    list_failed = False
     while True:
         report(f"正在获取列表第 {current_page} 页...", 0, 0)
         list_data = gateway_request("/api/pet/list", {
@@ -329,7 +332,13 @@ def run_sync(progress_callback=None):
             "baseid": ""
         })
 
-        if not list_data or not list_data.get("list"):
+        if list_data is None:
+            list_failed = True
+            report(f"列表第 {current_page} 页请求失败", current_page, 0)
+            _sync_logger.error("精灵列表第 %s 页请求失败", current_page)
+            break
+
+        if not list_data.get("list"):
             break
 
         for item in list_data["list"]:
@@ -348,6 +357,21 @@ def run_sync(progress_callback=None):
 
     total_pets = len(all_api_serials)
     report(f"共发现 {total_pets} 只精灵", 0, total_pets)
+    if list_failed and total_pets == 0:
+        message = "精灵列表请求失败，仓库没有改动。登录刷新失败时，需要重新抓取 ACCESS_TOKEN 和 REFRESH_TOKEN"
+        report(message, 0, 0)
+        _sync_logger.error(message)
+        conn.close()
+        return {
+            "new": 0,
+            "updated": 0,
+            "total": 0,
+            "released": 0,
+            "fail_count": 1,
+            "fail_details": ["精灵列表请求失败"],
+            "aborted": True,
+            "error": message,
+        }
 
     # 1. 补全缺失的 PetBaseId 基础信息（从 PETBASE_CONF.json 解析，无需网络请求）
     unique_base_ids = {pet["PetBaseId"] for pet in all_api_pets}
@@ -420,12 +444,19 @@ def run_sync(progress_callback=None):
     cursor.execute("SELECT serial_num FROM pet_instances WHERE is_active = 1")
     db_active_serials = {row[0] for row in cursor.fetchall()}
 
-    released_serials = db_active_serials - all_api_serials
-    if released_serials:
-        report(f"检测到 {len(released_serials)} 只已放生精灵，标记中...", 0, 0)
-        for sn in released_serials:
-            cursor.execute("UPDATE pet_instances SET is_active = 0 WHERE serial_num = ?", (sn,))
-        conn.commit()
+    released_count = 0
+    if list_failed:
+        report("列表没有拿全，这次不把缺失的精灵标成已放生", 0, 0)
+        _sync_logger.warning("精灵列表不完整（停在第 %s 页），跳过放生标记", current_page)
+    else:
+        released_serials = db_active_serials - all_api_serials
+        if released_serials:
+            released_count = len(released_serials)
+            report(f"检测到 {released_count} 只已放生精灵，标记中...", 0, 0)
+            _sync_logger.info("标记已放生 %s 只", released_count)
+            for sn in released_serials:
+                cursor.execute("UPDATE pet_instances SET is_active = 0 WHERE serial_num = ?", (sn,))
+            conn.commit()
 
     # 3. Reactivate/Ensure active for current pets
     for sn in all_api_serials:
@@ -587,6 +618,7 @@ def run_sync(progress_callback=None):
     # 收集失败详情
     fail_details = [f"#{sn}: {err}" for sn, ok, err in results if not ok and err]
     return {"new": new_count, "updated": updated_count, "total": total_pets,
+            "released": released_count,
             "fail_count": fail_count, "fail_details": fail_details}
 
 

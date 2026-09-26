@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 from pathlib import Path
@@ -27,6 +28,7 @@ LOG_DIR = PROJECT_ROOT / "logs"
 KEY_DIR = PROJECT_ROOT / "captures" / "keys"
 PET_LIST_OPCODE = 0x1346
 PET_LIST_NAME = "ZoneGetPetInfoByPageRsp"
+_sync_logger = logging.getLogger("sync")
 
 _ATTRS = (
     ("hp", "hp"),
@@ -413,20 +415,24 @@ def _consume(source: str, progress, *, iface: str | None = None, seconds: int = 
         def write_log(message: str) -> None:
             log_file.write(message + "\n")
             log_file.flush()
+            _sync_logger.info("抓包 %s", message)
 
         engine = Engine(port=8195, keys=FileKeyStore(KEY_DIR), on_message=on_message, log=write_log)
         if source == "pcap":
             path = Path(pcap or "")
             if not path.is_file():
                 raise FileNotFoundError(f"pcap 不存在: {path}")
+            write_log(f"回放 {path}")
             report(f"回放 {path.name}", 0, 0)
             for packet in read_pcap(path):
                 engine.feed(packet)
                 if collector.is_complete():
                     break
+            write_log(engine.summary())
         else:
             from scapy.all import AsyncSniffer
 
+            write_log(f"开始实时抓包 iface={iface} filter=tcp port 8195 seconds={seconds}")
             report(f"在 {iface} 上抓 TCP 8195，最长 {seconds} 秒。请打开游戏宠物仓库并翻页。", 0, 0)
             sniffer = AsyncSniffer(
                 iface=iface,
@@ -437,6 +443,8 @@ def _consume(source: str, progress, *, iface: str | None = None, seconds: int = 
             sniffer.start()
             deadline = time.time() + seconds
             last_status = None
+            last_summary = ""
+            last_summary_at = 0.0
             try:
                 while time.time() < deadline and not collector.is_complete():
                     status = collector.status()
@@ -444,18 +452,22 @@ def _consume(source: str, progress, *, iface: str | None = None, seconds: int = 
                         count, pages, total_page = status
                         report(f"已看到 {count} 只，页 {pages}/{total_page or '?'}", count, total_page)
                         last_status = status
+                    now = time.time()
+                    summary = engine.summary()
+                    if summary != last_summary and now - last_summary_at >= 5:
+                        write_log(summary)
+                        count, pages, total_page = collector.status()
+                        report(summary, count, total_page)
+                        last_summary = summary
+                        last_summary_at = now
                     time.sleep(0.5)
             finally:
                 sniffer.stop()
+            write_log(engine.summary())
 
     records, complete = collector.snapshot()
     if not records:
-        detail = ""
-        if engine.no_key:
-            detail = " 还没有会话密钥：进游戏前就要开始抓。"
-        elif engine.bad_key:
-            detail = " 缓存的会话密钥对不上，重新登录后再抓一次。"
-        raise RuntimeError("没有解出精灵列表。" + detail + "确认游戏里打开过宠物仓库。")
+        raise RuntimeError("没有解出精灵列表。" + empty_capture_reason(engine))
     if mark_missing and not complete:
         report("页数不齐，只更新出现过的精灵", len(records), collector.total_page or len(records))
         mark_missing = False
@@ -473,3 +485,13 @@ def sync_from_live(iface: str, seconds: int = 120, progress=None) -> dict:
 
 def sync_from_pcap(path: str, progress=None) -> dict:
     return _consume("pcap", progress, pcap=path)
+
+
+def empty_capture_reason(engine) -> str:
+    """没有写入精灵时，把传输层统计和原因拼成一行。"""
+    hint = engine.failure_hint()
+    if not hint and PET_LIST_OPCODE not in engine.opcodes:
+        hint = "解密成功，但没有精灵列表。在游戏里打开宠物仓库并翻页。"
+    if not hint:
+        hint = "没有收集到可写入的精灵。"
+    return f"{hint} {engine.summary()}"
