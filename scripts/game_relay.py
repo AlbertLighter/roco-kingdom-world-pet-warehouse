@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import queue
 import socket
 import threading
 import time
@@ -296,10 +297,15 @@ def run_relay(seconds: int | None, on_s2c, progress=None, stop_when=None, on_fra
                 dst.sendall(data)
                 buf.extend(data)
                 while True:
-                    pkt = pop_packet(buf)
+                    try:
+                        pkt = pop_packet(buf)
+                    except Exception as exc:
+                        report(f"分帧失败: {exc}")
+                        buf.clear()
+                        break
                     if pkt is None:
                         break
-                    observe(pkt, direction)
+                    observe_queue.put((pkt, direction))
         except OSError:
             return
         finally:
@@ -321,6 +327,9 @@ def run_relay(seconds: int | None, on_s2c, progress=None, stop_when=None, on_fra
             client.close()
             return
         upstream = socket.create_connection(orig, timeout=10)
+        upstream.settimeout(None)
+        client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        upstream.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         track(client)
         track(upstream)
         stats["flows"] += 1
@@ -331,6 +340,7 @@ def run_relay(seconds: int | None, on_s2c, progress=None, stop_when=None, on_fra
         right.start()
         left.join()
         right.join()
+        report(f"连接结束 {addr[0]}:{addr[1]}")
 
     def serve() -> None:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -427,12 +437,26 @@ def run_relay(seconds: int | None, on_s2c, progress=None, stop_when=None, on_fra
             except Exception:
                 pass
 
+    observe_queue: queue.Queue = queue.Queue()
+
+    def observe_worker() -> None:
+        while True:
+            item = observe_queue.get()
+            if item is None:
+                return
+            try:
+                observe(item[0], item[1])
+            except Exception as exc:
+                report(f"解析失败: {exc}")
+
+    threading.Thread(target=observe_worker, daemon=True).start()
     threading.Thread(target=serve, daemon=True).start()
     for _ in range(20):
         if listen_box["sock"] is not None or stop.is_set():
             break
         time.sleep(0.05)
     if stats["error"]:
+        observe_queue.put(None)
         shutdown()
         _active_stop = None
         raise RuntimeError(stats["error"])
@@ -443,6 +467,7 @@ def run_relay(seconds: int | None, on_s2c, progress=None, stop_when=None, on_fra
                 break
             time.sleep(0.5)
     finally:
+        observe_queue.put(None)
         shutdown()
         _active_stop = None
     if stats["error"]:
