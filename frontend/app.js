@@ -629,7 +629,7 @@ function addCaptureLog(text) {
 }
 
 function setCaptureBusy(busy) {
-    ['captureImportBtn', 'captureLiveBtn', 'capturePcapBtn', 'captureBtn'].forEach((id) => {
+    ['captureImportBtn', 'captureLiveBtn', 'captureDivertBtn', 'capturePcapBtn', 'captureBtn'].forEach((id) => {
         const node = document.getElementById(id);
         if (node) node.disabled = busy;
     });
@@ -699,6 +699,12 @@ document.getElementById('captureLiveBtn').addEventListener('click', () => {
     runCaptureSync({
         mode: 'live',
         iface: captureIface.value,
+        seconds: Number(document.getElementById('captureSeconds').value) || 120,
+    });
+});
+document.getElementById('captureDivertBtn').addEventListener('click', () => {
+    runCaptureSync({
+        mode: 'divert',
         seconds: Number(document.getElementById('captureSeconds').value) || 120,
     });
 });

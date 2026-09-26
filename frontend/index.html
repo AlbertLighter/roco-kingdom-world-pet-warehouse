@@ -46,12 +46,13 @@
                 <div id="syncLog" style="margin-top: 8px; max-height: 120px; overflow-y: auto; font-size: 0.85em; color: rgba(255,255,255,0.85); text-align: left; padding: 0 4px;"></div>
             </div>
             <div id="capturePanel" style="display: none; margin-top: 12px; padding: 12px 20px; text-align: left; background: rgba(0,0,0,0.15); border-radius: 6px;">
-                <p style="margin: 0 0 8px; font-size: 0.9em; color: rgba(255,255,255,0.9);">在本机旁路看 TCP 8195，不改游戏连接。解密在本项目里完成。进游戏前先开始，然后打开宠物仓库并翻页。也可以直接导入 data/ 里已经解密的导出。</p>
+                <p style="margin: 0 0 8px; font-size: 0.9em; color: rgba(255,255,255,0.9);">改道同步把游戏的 8195 接到本机代理，能看到完整握手。需要用管理员启动本服务，先点按钮再进游戏，然后打开宠物仓库并翻页。结束时这局连接会断开。不要同时开着 RocoMITM 的 WinDivert。旁路抓包不改连接，但可能漏掉密钥帧。</p>
                 <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
                     <button id="captureImportBtn" type="button" style="padding: 8px 14px; background: #1abc9c; color: white; border: none; border-radius: 4px; cursor: pointer;">导入已有导出</button>
                     <select id="captureIface" style="padding: 8px; border-radius: 4px; min-width: 160px;"></select>
                     <input id="captureSeconds" type="number" min="10" max="600" value="120" style="width: 72px; padding: 8px; border-radius: 4px;" title="最长抓包秒数">
                     <button id="captureLiveBtn" type="button" style="padding: 8px 14px; background: #148f77; color: white; border: none; border-radius: 4px; cursor: pointer;">开始实时抓包</button>
+                    <button id="captureDivertBtn" type="button" style="padding: 8px 14px; background: #b9770e; color: white; border: none; border-radius: 4px; cursor: pointer;">改道同步</button>
                     <input id="capturePcap" type="text" placeholder="pcap 路径" style="padding: 8px; border-radius: 4px; min-width: 180px;">
                     <button id="capturePcapBtn" type="button" style="padding: 8px 14px; background: #0e6655; color: white; border: none; border-radius: 4px; cursor: pointer;">回放 pcap</button>
                 <a href="packets.html" style="color: #fff;">打开抓包记录</a>

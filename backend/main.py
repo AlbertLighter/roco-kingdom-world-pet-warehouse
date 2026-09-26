@@ -1829,12 +1829,12 @@ def capture_ifaces():
 @app.post("/api/sync_capture")
 def sync_capture(payload: Optional[dict] = Body(default=None)):
     """从抓包结果或本机旁路抓包写入精灵列表。SSE 进度与 /api/sync 相同。"""
-    from scripts.capture_sync import sync_from_export, sync_from_live, sync_from_pcap
+    from scripts.capture_sync import sync_from_divert, sync_from_export, sync_from_live, sync_from_pcap
 
     payload = payload or {}
     mode = str(payload.get("mode") or "export")
-    if mode not in ("export", "live", "pcap"):
-        raise HTTPException(status_code=400, detail="mode 只能是 export、live 或 pcap")
+    if mode not in ("export", "live", "pcap", "divert"):
+        raise HTTPException(status_code=400, detail="mode 只能是 export、live、pcap 或 divert")
     iface = str(payload.get("iface") or "")
     seconds = int(payload.get("seconds") or 120)
     path = str(payload.get("path") or "")
@@ -1843,6 +1843,8 @@ def sync_capture(payload: Optional[dict] = Body(default=None)):
         label += f" iface={iface or '未指定'} seconds={seconds}"
     elif mode == "pcap":
         label += f" path={path or '未指定'}"
+    elif mode == "divert":
+        label += f" seconds={seconds}"
     else:
         label += f" path={path or 'data/'}"
     if not _begin_sync(label):
@@ -1860,6 +1862,8 @@ def sync_capture(payload: Optional[dict] = Body(default=None)):
                     result = sync_from_live(iface, seconds, progress=progress_callback)
                 elif mode == "pcap":
                     result = sync_from_pcap(path, progress=progress_callback)
+                elif mode == "divert":
+                    result = sync_from_divert(seconds, progress=progress_callback)
                 else:
                     result = sync_from_export(payload.get("path") or None, progress=progress_callback)
                 progress_queue.put({"done": True, "result": result})

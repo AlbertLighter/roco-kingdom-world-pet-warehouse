@@ -487,6 +487,43 @@ def sync_from_pcap(path: str, progress=None) -> dict:
     return _consume("pcap", progress, pcap=path)
 
 
+def sync_from_divert(seconds: int = 120, progress=None) -> dict:
+    """把游戏 TCP 8195 改道到本机代理，从完整字节流里同步精灵。"""
+    from scripts.game_relay import run_relay
+    from scripts.rocom_pet import parse_pet_list
+
+    def report(message: str, current: int = 0, total: int = 0) -> None:
+        if progress:
+            progress(message, current, total)
+        _sync_logger.info("改道 %s", message)
+
+    collector = PetPageCollector()
+
+    def on_s2c(opcode: int, payload: bytes) -> None:
+        if opcode != PET_LIST_OPCODE:
+            return
+        added = collector.add_decoded(parse_pet_list(payload))
+        count, pages, total_page = collector.status()
+        report(f"精灵列表 +{added}，已看到 {count} 只，页 {pages}/{total_page or '?'}", count, total_page)
+
+    report("正在把游戏的 8195 改道到本机。请在这之后进入游戏。")
+    stats = run_relay(seconds, on_s2c, progress=report, stop_when=collector.is_complete)
+    records, complete = collector.snapshot()
+    if not records:
+        if not stats.get("key"):
+            raise RuntimeError("没有拿到 0x1002 会话密钥。用管理员启动服务，先点改道同步，再进入游戏。")
+        raise RuntimeError(
+            f"解出了下行 {stats.get('s2c', 0)} 条，但没有精灵列表。请打开宠物仓库并翻页。"
+            f" 解密失败 {stats.get('failed', 0)} 条。"
+        )
+    if not complete:
+        report("页数不齐，只更新出现过的精灵", len(records), collector.total_page or len(records))
+        mark_missing = False
+    else:
+        mark_missing = True
+    return upsert_pets(records, mark_missing=mark_missing, progress=progress)
+
+
 def empty_capture_reason(engine) -> str:
     """没有写入精灵时，把传输层统计和原因拼成一行。"""
     hint = engine.failure_hint()

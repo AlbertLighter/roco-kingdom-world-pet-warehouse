@@ -18,7 +18,9 @@ dev = [
     "mypy>=1.15.0",
 ]
 capture = [
+    "psutil>=6.0.0",
     "pycryptodome>=3.20.0",
+    "pydivert>=2.1.0",
     "scapy>=2.5.0",
 ]
 
