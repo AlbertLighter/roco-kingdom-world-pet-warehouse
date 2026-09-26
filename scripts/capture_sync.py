@@ -331,7 +331,9 @@ def upsert_pets(records: list[dict], *, db_path: str | None = None, mark_missing
     released = 0
     if mark_missing:
         captured = {row["serial_num"] for row in records}
-        cursor.execute("SELECT serial_num FROM pet_instances WHERE is_active = 1")
+        cursor.execute(
+            "SELECT serial_num FROM pet_instances WHERE is_active = 1 AND COALESCE(world_team, 0) = 0"
+        )
         for (serial_num,) in cursor.fetchall():
             if serial_num not in captured:
                 cursor.execute("UPDATE pet_instances SET is_active = 0 WHERE serial_num = ?", (serial_num,))

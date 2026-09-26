@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>洛克王国：世界 宠物仓库</title>
-    <link rel="stylesheet" href="style.css?v=3">
+    <link rel="stylesheet" href="style.css?v=5">
 </head>
 <body class="page page-warehouse">
     <div id="app">
@@ -53,7 +53,15 @@
             </div>
         </header>
 
-        <main>
+        <main class="warehouse-layout">
+            <aside id="worldSidebar" class="world-sidebar" hidden>
+                <div class="world-sidebar-head">
+                    <h2>大世界队伍</h2>
+                    <button id="toggleWorldTeamBtn" type="button">在仓库中显示</button>
+                </div>
+                <section id="worldTeams" class="world-teams"></section>
+            </aside>
+            <div class="warehouse-main">
             <div id="petList" class="pet-grid">
                 <!-- 宠物卡片将在这里动态生成 -->
             </div>
@@ -61,6 +69,7 @@
                 <button id="prevBtn">上一页</button>
                 <span id="pageInfo">第 <input id="pageInput" type="number" min="1" value="1" style="width:50px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:3px;font-size:0.9em;"> / <span id="totalPages">1</span> 页 (共 <span id="totalCount">0</span> 条)</span>
                 <button id="nextBtn">下一页</button>
+            </div>
             </div>
         </main>
     </div>
@@ -116,6 +125,6 @@
         </div>
     </div>
 
-    <script src="app.js?v=3"></script>
+    <script src="app.js?v=5"></script>
 </body>
 </html>

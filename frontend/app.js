@@ -127,11 +127,14 @@ async function fetchRefreshTime() {
 }
 
 async function fetchPets() {
+    renderWorldTeams();
     const name = searchInput.value.trim().slice(0, 100);
     const sort = sortSelect.value;
     const hideMutation = hideMutationCheck.checked ? 'true' : '';
+    const showWorldTeam = localStorage.getItem('warehouse_showWorldTeam') === 'true';
     let url = `/api/pets?page=${currentPage}&pageSize=${pageSize}&sort=${encodeURIComponent(sort)}&name=${encodeURIComponent(name)}`;
     if (hideMutation) url += `&hide_mutation=true`;
+    if (showWorldTeam) url += `&hide_world_team=false`;
     try {
         const response = await fetch(url);
         const data = await response.json();
@@ -375,6 +378,7 @@ function createPetCard(pet) {
                 ${typeNames.map(t => `<span class="badge badge-type">${escapeHtml(t)}</span>`).join('')}
                 ${getTalentSkillName(pet.talent_skill) ? `<span class="badge badge-talent-skill">⭐ ${escapeHtml(getTalentSkillName(pet.talent_skill))}</span>` : ''}
                 ${pet.mutation ? `<span class="badge" style="background:#fce4ec;color:#c62828;display:inline-flex;align-items:center;gap:3px;"><img src="https://game.gtimg.cn/images/rocom/rocodata/MutationDiffType/${pet.mutation}.png" style="height:16px;width:auto;" onerror="this.style.display='none'"> ${{1:'异色',8:'炫彩',9:'异色炫彩',32:'污染'}[pet.mutation] || '特殊形态'}</span>` : ''}
+                ${pet.world_team ? `<span class="badge badge-world-team">大世界${pet.world_team}-${pet.world_slot}</span>` : ''}
                 ${releaseBadge}
             </div>
 
@@ -433,6 +437,41 @@ async function refreshPetCard(serialNum) {
         card.replaceWith(temp.firstElementChild);
     } catch (e) {
         console.error('刷新精灵失败:', e);
+    }
+}
+
+function syncWorldTeamButton() {
+    const button = document.getElementById('toggleWorldTeamBtn');
+    if (!button) return;
+    const shown = localStorage.getItem('warehouse_showWorldTeam') === 'true';
+    button.textContent = shown ? '在仓库中隐藏' : '在仓库中显示';
+}
+
+async function renderWorldTeams() {
+    const sidebar = document.getElementById('worldSidebar');
+    const box = document.getElementById('worldTeams');
+    if (!sidebar || !box) return;
+    syncWorldTeamButton();
+    try {
+        const res = await fetch('/api/world_teams');
+        const data = await res.json();
+        const teams = (data.teams || []).filter(team => team.pets && team.pets.length);
+        if (!teams.length) {
+            sidebar.hidden = true;
+            box.innerHTML = '';
+            return;
+        }
+        sidebar.hidden = false;
+        box.innerHTML = teams.map(team => `
+            <div class="world-team">
+                <h3>队伍 ${team.team}</h3>
+                <div class="world-team-pets">
+                    ${team.pets.map(pet => `<div class="world-team-pet">${pet.slot}. ${escapeHtml(pet.name)} Lv.${pet.level || '-'}</div>`).join('')}
+                </div>
+            </div>
+        `).join('');
+    } catch (error) {
+        sidebar.hidden = true;
     }
 }
 
@@ -496,6 +535,12 @@ prevBtn.addEventListener('click', () => { if (currentPage > 1) { currentPage--; 
 nextBtn.addEventListener('click', () => { currentPage++; fetchPets(); });
 sortSelect.addEventListener('change', () => { localStorage.setItem('warehouse_sort', sortSelect.value); currentPage = 1; fetchPets(); });
 hideMutationCheck.addEventListener('change', () => { localStorage.setItem('warehouse_hideMutation', hideMutationCheck.checked); currentPage = 1; fetchPets(); });
+document.getElementById('toggleWorldTeamBtn').addEventListener('click', () => {
+    const shown = localStorage.getItem('warehouse_showWorldTeam') === 'true';
+    localStorage.setItem('warehouse_showWorldTeam', shown ? 'false' : 'true');
+    currentPage = 1;
+    fetchPets();
+});
 
 // ---- 同步逻辑 (不变) ----
 const syncBtn = document.getElementById('syncBtn');

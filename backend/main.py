@@ -223,6 +223,8 @@ def init_db():
         ("pet_instances", "equip_skill_4", "INTEGER DEFAULT 0"),
         ("pet_instances", "mutation", "INTEGER DEFAULT 0"),
         ("pet_instances", "talent_skill", "INTEGER DEFAULT 0"),
+        ("pet_instances", "world_team", "INTEGER"),
+        ("pet_instances", "world_slot", "INTEGER"),
         ("breeding_slots", "nature_id", "INTEGER"),
         ("breeding_slots", "talents", "TEXT"),
         ("breeding_slots", "use_king_ball", "INTEGER DEFAULT 0"),
@@ -468,7 +470,7 @@ class BreedCalculator:
                 total_prob += prob_k * sum_k
             return total_prob
 
-def _build_pet_filter(name, base_id, include_inactive, hide_mutation=False):
+def _build_pet_filter(name, base_id, include_inactive, hide_mutation=False, hide_world_team=False):
     """Build WHERE clause and params for pet queries. All user values go through ? placeholders."""
     where_parts = []
     params = []
@@ -485,6 +487,8 @@ def _build_pet_filter(name, base_id, include_inactive, hide_mutation=False):
         # 只隐藏异色(1)、炫彩(8)、异色炫彩(9)。
         # 污染精灵使用 mutation=32，应继续正常显示。
         where_parts.append("(i.mutation IS NULL OR i.mutation NOT IN (1, 8, 9))")
+    if hide_world_team:
+        where_parts.append("COALESCE(i.world_team, 0) = 0")
 
     where_str = " AND ".join(where_parts) if where_parts else "1=1"
     return where_str, params
@@ -515,6 +519,35 @@ def get_talent_skills():
     """获取特长配置映射"""
     return get_talent_skill_map()
 
+@app.get("/api/world_teams")
+def get_world_teams():
+    """三支大世界队伍，每支按站位返回精灵。"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT i.world_team, i.world_slot, i.serial_num, i.name, i.level, i.base_id,
+               b.name AS base_name
+        FROM pet_instances i
+        LEFT JOIN pet_base_info b ON i.base_id = b.objId
+        WHERE COALESCE(i.world_team, 0) > 0
+        ORDER BY i.world_team, i.world_slot
+        """
+    )
+    grouped = {1: [], 2: [], 3: []}
+    for row in cursor.fetchall():
+        team = int(row["world_team"])
+        grouped.setdefault(team, []).append({
+            "slot": row["world_slot"],
+            "serial_num": row["serial_num"],
+            "name": row["name"] or row["base_name"] or "未知",
+            "level": row["level"],
+            "base_id": row["base_id"],
+        })
+    conn.close()
+    return {"teams": [{"team": team, "pets": grouped.get(team, [])} for team in (1, 2, 3)]}
+
+
 @app.get("/api/pets")
 def get_pets(
     page: int = Query(1, ge=1),
@@ -523,12 +556,15 @@ def get_pets(
     base_id: Optional[int] = None,
     include_inactive: bool = Query(False),
     sort: str = Query("time_desc", pattern="^(time_desc|time_asc|base_id)$"),
-    hide_mutation: bool = Query(False)
+    hide_mutation: bool = Query(False),
+    hide_world_team: bool = Query(True),
 ):
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    where_str, params = _build_pet_filter(name, base_id, include_inactive, hide_mutation=hide_mutation)
+    where_str, params = _build_pet_filter(
+        name, base_id, include_inactive, hide_mutation=hide_mutation, hide_world_team=hide_world_team,
+    )
     
     # 1. 获取总数
     count_query = f"""
