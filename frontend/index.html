@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>洛克王国：世界 宠物仓库</title>
-    <link rel="stylesheet" href="style.css?v=6">
+    <link rel="stylesheet" href="style.css?v=7">
 </head>
 <body class="page page-warehouse">
     <div id="app">
@@ -19,6 +19,7 @@
                 <input type="text" id="searchInput" placeholder="搜索宠物名称...">
                 <button id="searchBtn">搜索</button>
                 <select id="sortSelect" style="padding:6px 10px;border:none;border-radius:4px;font-size:0.95em;cursor:pointer;">
+                    <option value="box">仓库位置</option>
                     <option value="time_desc">获取时间 ↓（最新）</option>
                     <option value="time_asc">获取时间 ↑（最早）</option>
                     <option value="base_id">按图鉴编号 ↑</option>
@@ -67,7 +68,7 @@
             </div>
             <div class="pagination">
                 <button id="prevBtn">上一页</button>
-                <span id="pageInfo">第 <input id="pageInput" type="number" min="1" value="1" style="width:50px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:3px;font-size:0.9em;"> / <span id="totalPages">1</span> 页 (共 <span id="totalCount">0</span> 条)</span>
+                <span id="pageInfo"><span id="pageKind">盒子</span> <input id="pageInput" type="number" min="1" value="1" style="width:50px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:3px;font-size:0.9em;"> / <span id="totalPages">1</span> <span id="pageUnit">盒</span>（<span id="pageCountLabel">本盒</span> <span id="totalCount">0</span> <span id="pageCountUnit">只</span>）</span>
                 <button id="nextBtn">下一页</button>
             </div>
             </div>
@@ -125,6 +126,6 @@
         </div>
     </div>
 
-    <script src="app.js?v=5"></script>
+    <script src="app.js?v=7"></script>
 </body>
 </html>

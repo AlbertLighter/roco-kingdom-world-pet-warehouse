@@ -1061,6 +1061,13 @@ main { padding: clamp(16px, 2.5vw, 32px); }
     gap: 18px;
 }
 
+.pet-card-empty {
+    min-height: 148px;
+    border: 1px dashed #d5dbe6;
+    border-radius: var(--radius-md, 15px);
+    background: rgba(255, 255, 255, 0.35);
+}
+
 .pet-card {
     position: relative;
     overflow: hidden;

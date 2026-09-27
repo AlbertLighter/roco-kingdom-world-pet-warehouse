@@ -557,7 +557,7 @@ def get_pets(
     name: Optional[str] = None,
     base_id: Optional[int] = None,
     include_inactive: bool = Query(False),
-    sort: str = Query("time_desc", pattern="^(time_desc|time_asc|base_id)$"),
+    sort: str = Query("box", pattern="^(box|time_desc|time_asc|base_id)$"),
     hide_mutation: bool = Query(False),
     hide_world_team: bool = Query(True),
 ):
@@ -567,7 +567,10 @@ def get_pets(
     where_str, params = _build_pet_filter(
         name, base_id, include_inactive, hide_mutation=hide_mutation, hide_world_team=hide_world_team,
     )
-    
+
+    if sort == "box":
+        return _pets_by_box(cursor, conn, where_str, params, page)
+
     # 1. 获取总数
     count_query = f"""
     SELECT COUNT(*) FROM (
@@ -582,11 +585,12 @@ def get_pets(
     
     # 排序映射
     sort_clauses = {
+        "box": "CASE WHEN i.box_id IS NULL THEN 1 ELSE 0 END, i.box_id ASC, COALESCE(i.box_slot, 0) ASC, i.serial_num ASC",
         "time_desc": "i.serial_num DESC",
         "time_asc": "i.serial_num ASC",
         "base_id": "COALESCE(b.handbook_id, 999999) ASC, i.talent_rank DESC, i.level DESC, i.serial_num ASC",
     }
-    order_by = sort_clauses.get(sort, "i.serial_num DESC")
+    order_by = sort_clauses.get(sort, sort_clauses["box"])
 
     # 2. 获取分页详细数据
     data_query = f"""
@@ -626,6 +630,69 @@ def get_pets(
         "page": page,
         "pageSize": pageSize,
         "data": pets
+    }
+
+
+def _pets_by_box(cursor, conn, where_str: str, params: list, page: int):
+    """一页一个盒子。格子按 0–29 排，没有精灵的位置留空。"""
+    cursor.execute(
+        f"""
+        SELECT DISTINCT i.box_id
+        FROM pet_instances i
+        JOIN pet_base_info b ON i.base_id = b.objId
+        WHERE {where_str} AND i.box_id IS NOT NULL
+        ORDER BY i.box_id
+        """,
+        params,
+    )
+    box_ids = [row[0] for row in cursor.fetchall()]
+    box_count = len(box_ids)
+    if box_count == 0:
+        conn.close()
+        return {"total": 0, "page": 1, "pageSize": 30, "mode": "box", "box_id": None, "box_count": 0, "filled": 0, "data": []}
+    page = min(page, box_count)
+    box_id = box_ids[page - 1]
+    cursor.execute(
+        f"""
+        SELECT
+            i.*,
+            b.name as base_name,
+            b.description as base_description,
+            b.familyId as base_familyId,
+            b.itemId as base_itemId,
+            b.egg_groups as base_egg_groups,
+            b.egg_group_int as base_egg_group_int,
+            b.height_high as base_height_high,
+            b.height_low as base_height_low,
+            b.weight_high as base_weight_high,
+            b.weight_low as base_weight_low,
+            n.name as nature_name,
+            n.plus_stat as nature_plus,
+            n.minus_stat as nature_minus
+        FROM pet_instances i
+        JOIN pet_base_info b ON i.base_id = b.objId
+        LEFT JOIN pet_natures n ON i.nature = n.id
+        WHERE {where_str} AND i.box_id = ?
+        """,
+        params + [box_id],
+    )
+    slots = [None] * 30
+    for row in cursor.fetchall():
+        pet = dict(row)
+        slot = pet.get("box_slot")
+        if slot is None or not (0 <= int(slot) < 30):
+            continue
+        slots[int(slot)] = pet
+    conn.close()
+    return {
+        "total": box_count,
+        "page": page,
+        "pageSize": 30,
+        "mode": "box",
+        "box_id": box_id,
+        "box_count": box_count,
+        "filled": sum(slot is not None for slot in slots),
+        "data": slots,
     }
 
 @app.get("/api/pets/{serial_num}")

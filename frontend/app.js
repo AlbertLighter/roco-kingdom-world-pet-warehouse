@@ -138,8 +138,8 @@ async function fetchPets() {
     try {
         const response = await fetch(url);
         const data = await response.json();
-        renderPets(data.data);
-        updatePagination(data.total);
+        renderPets(data.data, data.mode === 'box');
+        updatePagination(data.mode === 'box' ? data.box_count : data.total, data);
         document.getElementById('fetchError')?.remove();
     } catch (error) {
         console.error('Failed to fetch pets:', error);
@@ -367,6 +367,7 @@ function createPetCard(pet) {
                     ${ballUrl ? `<img class="ball-icon" src="${ballUrl}" alt="" onerror="this.style.display='none'">` : ''}
                     <span class="pet-name" onclick='copyPetName(${JSON.stringify(pet.name)})' style="cursor:pointer;" title="点击复制名称">${escapedName} <span class="${genderIconClass}">${genderLabel}</span></span>
                     <span class="pet-level">Lv.${pet.level}</span>
+                    ${pet.box_id != null ? `<span class="pet-level">盒子${pet.box_id}·${Number(pet.box_slot) + 1}</span>` : ''}
                 </div>
                 <span class="pet-sn">#${pet.serial_num}</span>
             </div>
@@ -475,13 +476,20 @@ async function renderWorldTeams() {
     }
 }
 
-function renderPets(pets) {
+function renderPets(pets, boxMode) {
     petListEl.innerHTML = '';
-    pets.forEach(pet => {
+    (pets || []).forEach(pet => {
+        if (!pet) {
+            const empty = document.createElement('div');
+            empty.className = 'pet-card-empty';
+            petListEl.appendChild(empty);
+            return;
+        }
         const card = document.createElement('div');
         card.innerHTML = createPetCard(pet);
         petListEl.appendChild(card.firstElementChild);
     });
+    if (!boxMode) return;
 }
 
 async function setGender(sn, gender) {
@@ -493,15 +501,24 @@ async function setGender(sn, gender) {
     fetchPets();
 }
 
-function updatePagination(total) {
-    const totalPages = Math.ceil(total / pageSize);
+function updatePagination(total, data) {
+    const boxMode = data && data.mode === 'box';
+    const totalPages = boxMode ? (data.box_count || 0) : Math.ceil(total / pageSize);
+    if (boxMode && data.page && data.page !== currentPage) currentPage = data.page;
     pageInput.value = currentPage;
     pageInput.max = totalPages || 1;
     totalPagesEl.textContent = totalPages || 1;
-    totalCountEl.textContent = total;
+    totalCountEl.textContent = boxMode ? (data.filled || 0) : total;
+    const kind = document.getElementById('pageKind');
+    const unit = document.getElementById('pageUnit');
+    const countLabel = document.getElementById('pageCountLabel');
+    const countUnit = document.getElementById('pageCountUnit');
+    if (kind) kind.textContent = boxMode ? `盒子 ${data.box_id ?? '-'} · 第` : '第';
+    if (unit) unit.textContent = boxMode ? '盒' : '页';
+    if (countLabel) countLabel.textContent = boxMode ? '本盒' : '共';
+    if (countUnit) countUnit.textContent = boxMode ? '只' : '条';
     prevBtn.disabled = currentPage <= 1;
     nextBtn.disabled = currentPage >= totalPages;
-    // 刷新后记住当前页
     localStorage.setItem('warehouse_currentPage', currentPage);
 }
 
@@ -525,7 +542,7 @@ document.addEventListener('keydown', (e) => {
         if (currentPage > 1) { currentPage--; fetchPets(); }
     } else if (e.key === 'ArrowRight') {
         if (document.activeElement?.tagName === 'INPUT') return;
-        const totalPages = Math.ceil(parseInt(totalCountEl.textContent) / pageSize);
+        const totalPages = parseInt(pageInput.max) || 1;
         if (currentPage < totalPages) { currentPage++; fetchPets(); }
     }
 });
