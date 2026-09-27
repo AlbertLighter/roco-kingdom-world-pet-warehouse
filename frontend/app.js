@@ -552,6 +552,21 @@ prevBtn.addEventListener('click', () => { if (currentPage > 1) { currentPage--; 
 nextBtn.addEventListener('click', () => { currentPage++; fetchPets(); });
 sortSelect.addEventListener('change', () => { localStorage.setItem('warehouse_sort', sortSelect.value); currentPage = 1; fetchPets(); });
 hideMutationCheck.addEventListener('change', () => { localStorage.setItem('warehouse_hideMutation', hideMutationCheck.checked); currentPage = 1; fetchPets(); });
+document.getElementById('overlayBtn').addEventListener('click', async () => {
+    const button = document.getElementById('overlayBtn');
+    button.disabled = true;
+    try {
+        const res = await fetch('/api/overlay', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ page: currentPage }),
+        });
+        if (!res.ok) throw new Error('打不开对照窗');
+    } catch (error) {
+        console.error(error);
+    }
+    button.disabled = false;
+});
 document.getElementById('toggleWorldTeamBtn').addEventListener('click', () => {
     const shown = localStorage.getItem('warehouse_showWorldTeam') === 'true';
     localStorage.setItem('warehouse_showWorldTeam', shown ? 'false' : 'true');

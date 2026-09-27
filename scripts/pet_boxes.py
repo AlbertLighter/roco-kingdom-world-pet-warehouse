@@ -73,11 +73,14 @@ def apply_boxes(body: bytes, db_path: str | None = None) -> dict:
     try:
         ensure_box_columns(conn)
         known = {row[0] for row in conn.execute("SELECT serial_num FROM pet_instances")}
-        kept = {
-            box_id: gids
-            for box_id, gids in plausible.items()
-            if sum(gid in known for gid in gids) >= len(gids) * 0.6
-        }
+        kept = {}
+        for box_id, gids in plausible.items():
+            occupied = [gid for gid in gids if gid]
+            if not occupied:
+                continue
+            if sum(gid in known for gid in occupied) < len(occupied) * 0.6:
+                continue
+            kept[box_id] = gids
         if len(kept) < 3:
             return {"boxes": 0, "updated": 0}
         conn.execute("UPDATE pet_instances SET box_id = NULL, box_slot = NULL WHERE box_id IS NOT NULL")

@@ -31,6 +31,10 @@ class PetBoxTests(unittest.TestCase):
         packet = _msg(9, body)
         boxes = find_boxes(packet)
         self.assertEqual(boxes[3], gids)
+        partial = _varint((1 << 3) | 0) + _varint(4)
+        partial += b"".join(_varint((3 << 3) | 0) + _varint(gid) for gid in (100, 101))
+        partial += b"".join(_varint((3 << 3) | 0) + _varint(0) for _ in range(28))
+        self.assertEqual(find_boxes(_msg(9, partial))[4][:4], [100, 101, 0, 0])
         freed = _varint((2 << 3) | 0) + _varint(100) + _varint((2 << 3) | 0) + _varint(101)
         self.assertEqual(freed_gids(freed), [100, 101])
 

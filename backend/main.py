@@ -1932,6 +1932,25 @@ def get_refresh_time():
     return {"refresh_time": None}
 
 
+_overlay_proc = None
+
+
+@app.post("/api/overlay")
+def open_box_overlay(payload: Optional[dict] = Body(default=None)):
+    """打开置顶半透明的盒子对照窗。"""
+    global _overlay_proc
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    if _overlay_proc is not None and _overlay_proc.poll() is None:
+        return {"ok": True, "already": True}
+    page = int((payload or {}).get("page") or 1)
+    script = Path(__file__).resolve().parents[1] / "scripts" / "box_overlay.py"
+    _overlay_proc = subprocess.Popen([sys.executable, str(script), str(page)])
+    return {"ok": True}
+
+
 # ---- 放生推荐 API ----
 
 @app.get("/api/release_recommendations")
