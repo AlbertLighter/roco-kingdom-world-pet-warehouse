@@ -5,7 +5,6 @@ from pathlib import Path
 
 from backend.main import match_and_fill_gender_by_stats
 
-
 STATS = {
     "hp": 101,
     "adAttack": 52,

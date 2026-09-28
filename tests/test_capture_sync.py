@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import scripts.fetcher as fetcher
 from scripts.capture_sync import (
     PetPageCollector,
     decode_pet_name,
@@ -11,9 +12,8 @@ from scripts.capture_sync import (
     sync_from_export,
     upsert_pets,
 )
-from scripts.rocom_capture import Engine
 from scripts.fetcher import init_db
-import scripts.fetcher as fetcher
+from scripts.rocom_capture import Engine
 
 
 def sample_pet(**overrides):

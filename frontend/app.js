@@ -59,10 +59,10 @@ function escapeHtml(str) {
 async function fetchConfigs() {
     try {
         const [blRes, tpRes, mdRes, tsRes] = await Promise.all([
-            fetch('/api/config/bloodlines'),
-            fetch('/api/config/types'),
-            fetch('/api/config/medals'),
-            fetch('/api/config/talent_skills')
+            rocoFetch('/api/config/bloodlines'),
+            rocoFetch('/api/config/types'),
+            rocoFetch('/api/config/medals'),
+            rocoFetch('/api/config/talent_skills')
         ]);
         bloodlineMap = await blRes.json();
         typeMap = await tpRes.json();
@@ -96,7 +96,7 @@ if (savedHideMutation === 'true') hideMutationCheck.checked = true;
 
 async function fetchReleaseData() {
     try {
-        const res = await fetch('/api/release_recommendations?page=1&page_size=5000');
+        const res = await rocoFetch('/api/release_recommendations?page=1&page_size=5000');
         if (!res.ok) return;
         const data = await res.json();
         speciesPrefsList = data.species_groups || [];
@@ -118,7 +118,7 @@ async function fetchReleaseData() {
 
 async function fetchRefreshTime() {
     try {
-        const response = await fetch('/api/refresh_time');
+        const response = await rocoFetch('/api/refresh_time');
         const data = await response.json();
         refreshTimeValue.textContent = data.refresh_time || '暂无数据（请先同步）';
     } catch (error) {
@@ -136,7 +136,7 @@ async function fetchPets() {
     if (hideMutation) url += `&hide_mutation=true`;
     if (showWorldTeam) url += `&hide_world_team=false`;
     try {
-        const response = await fetch(url);
+        const response = await rocoFetch(url);
         const data = await response.json();
         renderPets(data.data, data.mode === 'box');
         updatePagination(data.mode === 'box' ? data.box_count : data.total, data);
@@ -365,7 +365,7 @@ function createPetCard(pet) {
             <div class="pet-header">
                 <div class="pet-header-left">
                     ${ballUrl ? `<img class="ball-icon" src="${ballUrl}" alt="" onerror="this.style.display='none'">` : ''}
-                    <span class="pet-name" onclick='copyPetName(${JSON.stringify(pet.name)})' style="cursor:pointer;" title="点击复制名称">${escapedName} <span class="${genderIconClass}">${genderLabel}</span></span>
+                    <span class="pet-name" style="cursor:pointer;" title="点击复制名称">${escapedName} <span class="${genderIconClass}">${genderLabel}</span></span>
                     <span class="pet-level">Lv.${pet.level}</span>
                     ${pet.box_id != null ? `<span class="pet-level">盒子${pet.box_id}·${Number(pet.box_slot) + 1}</span>` : ''}
                 </div>
@@ -416,7 +416,7 @@ function createPetCard(pet) {
                     const cfg = getSpeciesConfig(pet.base_id);
                     const hasConfig = cfg && cfg.configured === true;
                     const bg = hasConfig ? '#f39c12' : '#bdc3c7';
-                    return `<button onclick="openSpeciesConfig(${pet.base_id}, '${escapeHtml(pet.base_name || pet.name)}')" style="margin-left:6px;padding:4px 8px;background:${bg};color:white;border:none;border-radius:3px;cursor:pointer;font-size:0.78em;" title="${hasConfig ? '已配置' : '未配置，点击设置'}">⚙️</button>`;
+                    return `<button class="species-config-btn" style="margin-left:6px;padding:4px 8px;background:${bg};color:white;border:none;border-radius:3px;cursor:pointer;font-size:0.78em;" title="${hasConfig ? '已配置' : '未配置，点击设置'}">⚙️</button>`;
                 })()}
                 <button onclick="refreshPetCard(${pet.serial_num})" style="margin-left:6px;padding:4px 8px;background:#3498db;color:white;border:none;border-radius:3px;cursor:pointer;font-size:0.78em;" title="刷新此精灵">🔄</button>
             </div>
@@ -427,7 +427,7 @@ function createPetCard(pet) {
 // ---- 刷新单张精灵卡片 ----
 async function refreshPetCard(serialNum) {
     try {
-        const res = await fetch(`/api/pets/${serialNum}/sync`, { method: 'POST' });
+        const res = await rocoFetch(`/api/pets/${serialNum}/sync`, { method: 'POST' });
         if (!res.ok) return;
         const pet = await res.json();
         const card = document.querySelector(`.pet-card[data-serial="${serialNum}"]`);
@@ -454,7 +454,7 @@ async function renderWorldTeams() {
     if (!sidebar || !box) return;
     syncWorldTeamButton();
     try {
-        const res = await fetch('/api/world_teams');
+        const res = await rocoFetch('/api/world_teams');
         const data = await res.json();
         const teams = (data.teams || []).filter(team => team.pets && team.pets.length);
         if (!teams.length) {
@@ -487,13 +487,20 @@ function renderPets(pets, boxMode) {
         }
         const card = document.createElement('div');
         card.innerHTML = createPetCard(pet);
-        petListEl.appendChild(card.firstElementChild);
+        const root = card.firstElementChild;
+        const nameNode = root.querySelector('.pet-name');
+        if (nameNode) nameNode.addEventListener('click', () => copyPetName(pet.name || ''));
+        const speciesBtn = root.querySelector('.species-config-btn');
+        if (speciesBtn) {
+            speciesBtn.addEventListener('click', () => openSpeciesConfig(pet.base_id, pet.base_name || pet.name || ''));
+        }
+        petListEl.appendChild(root);
     });
     if (!boxMode) return;
 }
 
 async function setGender(sn, gender) {
-    await fetch('/api/update_gender', {
+    await rocoFetch('/api/update_gender', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({serial_num: sn, gender: gender})
@@ -556,7 +563,7 @@ document.getElementById('overlayBtn').addEventListener('click', async () => {
     const button = document.getElementById('overlayBtn');
     button.disabled = true;
     try {
-        const res = await fetch('/api/overlay', {
+        const res = await rocoFetch('/api/overlay', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ page: currentPage }),
@@ -593,7 +600,7 @@ syncBtn.addEventListener('click', async () => {
     syncProgressBar.style.width = '0%';
     syncProgressText.textContent = '0%';
     try {
-        const response = await fetch('/api/sync', { method: 'POST' });
+        const response = await rocoFetch('/api/sync', { method: 'POST' });
         if (!response.ok) {
             const err = await response.json();
             addSyncLog(`❌ ${err.detail?.message || err.detail || '同步失败'}`);
@@ -671,7 +678,7 @@ syncGenderBtn.addEventListener('click', async () => {
     syncGenderProgressBar.style.width = '0%';
     syncGenderProgressText.textContent = '0%';
     try {
-        const response = await fetch('/api/sync_gender_export', { method: 'POST' });
+        const response = await rocoFetch('/api/sync_gender_export', { method: 'POST' });
         if (!response.ok) {
             const err = await response.json();
             addGenderSyncLog(`❌ ${err.detail || '同步失败'}`);
@@ -733,13 +740,13 @@ function resetGenderSyncBtn() {
 // ---- 家园生蛋同步检测 ----
 async function checkBreedingAfterSync() {
     try {
-        const res = await fetch('/api/breeding_slots');
+        const res = await rocoFetch('/api/breeding_slots');
         const slots = await res.json();
         const configured = slots.filter(s => s.target_base_id && s.father && s.mother);
         if (configured.length === 0) return;
 
         addSyncLog('🔍 正在检测家园生蛋推荐...');
-        const checkRes = await fetch('/api/check_breeding_slots');
+        const checkRes = await rocoFetch('/api/check_breeding_slots');
         const results = await checkRes.json();
         const changed = results.filter(r => r.changed);
         if (changed.length > 0) {
@@ -824,7 +831,7 @@ async function saveSpeciesConfig() {
     const keepCount = parseInt(document.getElementById('speciesKeepCount').value) || 3;
 
     try {
-        const res = await fetch('/api/species_preferences', {
+        const res = await rocoFetch('/api/species_preferences', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -877,7 +884,7 @@ function openGlobalConfig() {
     modal.style.display = 'flex';
     tbody.innerHTML = '<tr><td colspan="3">加载中...</td></tr>';
 
-    fetch('/api/species_preferences')
+    rocoFetch('/api/species_preferences')
         .then(r => r.json())
         .then(data => renderGlobalConfigTable(data.preferences))
         .catch(e => { tbody.innerHTML = `<tr><td colspan="3" style="color:#e74c3c;">加载失败: ${e.message}</td></tr>`; });
@@ -942,7 +949,7 @@ async function saveGlobalConfig() {
     });
 
     try {
-        const res = await fetch('/api/species_preferences', {
+        const res = await rocoFetch('/api/species_preferences', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ preferences: prefs })

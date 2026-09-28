@@ -6,7 +6,6 @@ import json
 import logging
 import sqlite3
 import threading
-import time
 from datetime import datetime
 from pathlib import Path
 
@@ -20,6 +19,9 @@ MAX_BODY = 256 * 1024
 PET_LIST_OPCODE = 0x1346
 
 _LOCK = threading.Lock()
+_CONN: sqlite3.Connection | None = None
+_CONN_PATH: Path | None = None
+_WRITES = 0
 _sync_logger = logging.getLogger("sync")
 
 OPCODE_NAMES = {
@@ -47,6 +49,14 @@ def opcode_name(opcode: int) -> str:
     return OPCODE_NAMES.get(int(opcode), f"0x{int(opcode):04X}")
 
 
+def close_db() -> None:
+    global _CONN, _CONN_PATH
+    if _CONN is not None:
+        _CONN.close()
+    _CONN = None
+    _CONN_PATH = None
+
+
 def _connect() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -71,7 +81,33 @@ def _connect() -> sqlite3.Connection:
         """
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_capture_opcode ON capture_messages(opcode)")
+    conn.execute("PRAGMA journal_mode=WAL")
     return conn
+
+
+def _db() -> sqlite3.Connection:
+    global _CONN, _CONN_PATH
+    path = Path(DB_PATH)
+    if _CONN is not None and _CONN_PATH != path:
+        close_db()
+    if _CONN is None:
+        _CONN = _connect()
+        _CONN_PATH = path
+    return _CONN
+
+
+def allowed_pcap(path: str) -> Path:
+    """只允许读取项目目录里的抓包文件。"""
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        candidate = PROJECT_ROOT / candidate
+    resolved = candidate.resolve()
+    root = PROJECT_ROOT.resolve()
+    if not resolved.is_relative_to(root):
+        raise ValueError("只能读取项目目录中的 pcap")
+    if not resolved.is_file():
+        raise FileNotFoundError(f"pcap 不存在: {resolved}")
+    return resolved
 
 
 def _trim(conn: sqlite3.Connection) -> None:
@@ -102,9 +138,14 @@ def record_message(message, source: str = "live", summary: str | None = None) ->
         body = body[:MAX_BODY]
         truncated = 1
     opcode = int(getattr(message, "opcode", 0))
+    direction = getattr(message, "direction", "")
+    if direction == "c2s":
+        body = b""
+        truncated = 0
+    global _WRITES
     try:
         with _LOCK:
-            conn = _connect()
+            conn = _db()
             try:
                 cursor = conn.execute(
                     """
@@ -115,24 +156,28 @@ def record_message(message, source: str = "live", summary: str | None = None) ->
                     """,
                     (
                         datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        getattr(message, "direction", ""),
+                        direction,
                         opcode,
                         f"0x{opcode:04X}",
                         opcode_name(opcode),
                         getattr(message, "session", ""),
                         source,
-                        len(bytes(getattr(message, "app_body", b"") or b"")),
+                        len(body),
                         truncated,
                         body.hex(),
                         summary or _summary(opcode, body),
                     ),
                 )
-                _trim(conn)
+                _WRITES += 1
+                if _WRITES % 50 == 0:
+                    _trim(conn)
                 conn.commit()
                 return int(cursor.lastrowid)
-            finally:
-                conn.close()
+            except Exception:
+                _sync_logger.exception("写入抓包记录失败")
+                return None
     except Exception:
+        _sync_logger.exception("打开抓包库失败")
         return None
 
 
@@ -501,9 +546,7 @@ def record_live(mode: str, iface: str = "", seconds: int = 120, pcap: str = "", 
     )
     if mode != "pcap":
         raise ValueError("实时记录只走改道。回放请使用 pcap。")
-    path = Path(pcap)
-    if not path.is_file():
-        raise FileNotFoundError(f"pcap 不存在: {path}")
+    path = allowed_pcap(pcap)
     emit(f"回放 {path}", 0, 0)
     for packet in read_pcap(path):
         engine.feed(packet)

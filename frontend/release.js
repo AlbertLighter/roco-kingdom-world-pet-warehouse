@@ -22,7 +22,7 @@ document.addEventListener('DOMContentLoaded', async function () {
     document.getElementById('calibrateBtn').addEventListener('click', startCalibration);
     document.getElementById('skipConfirmBtn').addEventListener('click', skipConfirm);
     document.getElementById('autoReleaseBtn').addEventListener('click', startAutoRelease);
-    document.getElementById('stopReleaseBtn').addEventListener('click', () => fetch('/api/release_click/stop', { method: 'POST' }));
+    document.getElementById('stopReleaseBtn').addEventListener('click', () => rocoFetch('/api/release_click/stop', { method: 'POST' }));
     refreshCalibration();
 
     document.getElementById('prevBtn').addEventListener('click', () => {
@@ -60,7 +60,7 @@ document.addEventListener('DOMContentLoaded', async function () {
 async function refreshCalibration() {
     const status = document.getElementById('autoReleaseStatus');
     try {
-        const res = await fetch('/api/release_click/calibration');
+        const res = await rocoFetch('/api/release_click/calibration');
         const data = await res.json();
         status.textContent = data.listening ? (data.prompt || '请在游戏窗口点击') : (data.ready ? '点击位置已校准' : '还没有校准');
         if (data.listening) setTimeout(refreshCalibration, 600);
@@ -71,7 +71,7 @@ async function refreshCalibration() {
 
 async function startCalibration() {
     const status = document.getElementById('autoReleaseStatus');
-    const res = await fetch('/api/release_click/calibrate', { method: 'POST' });
+    const res = await rocoFetch('/api/release_click/calibrate', { method: 'POST' });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
         status.textContent = data.detail || '无法开始校准';
@@ -82,7 +82,7 @@ async function startCalibration() {
 
 async function skipConfirm() {
     const status = document.getElementById('autoReleaseStatus');
-    const res = await fetch('/api/release_click/calibrate/skip_confirm', { method: 'POST' });
+    const res = await rocoFetch('/api/release_click/calibrate/skip_confirm', { method: 'POST' });
     const data = await res.json().catch(() => ({}));
     status.textContent = res.ok ? '校准已保存' : (data.detail || '现在还不能跳过');
     refreshCalibration();
@@ -90,7 +90,7 @@ async function skipConfirm() {
 
 async function startAutoRelease() {
     const status = document.getElementById('autoReleaseStatus');
-    const preview = await fetch('/api/release_click/preview');
+    const preview = await rocoFetch('/api/release_click/preview');
     const info = await preview.json();
     if (!info.ready) {
         status.textContent = '请先校准点击位置';
@@ -101,7 +101,7 @@ async function startAutoRelease() {
         return;
     }
     if (!window.confirm(`将在游戏窗口点击放生 ${info.count} 只。请先打开第一只所在的盒子，并处于勾选模式。`)) return;
-    const response = await fetch('/api/release_click/run', { method: 'POST' });
+    const response = await rocoFetch('/api/release_click/run', { method: 'POST' });
     if (!response.ok) {
         const err = await response.json().catch(() => ({}));
         status.textContent = err.detail || '无法开始';
@@ -132,7 +132,7 @@ async function startAutoRelease() {
 async function loadNatureMap() {
     try {
         // 从后端获取性格列表
-        const res = await fetch('/api/pets?pageSize=1');
+        const res = await rocoFetch('/api/pets?pageSize=1');
         // 性格是固定的，直接硬编码30种
         natureMap = {
             1: "大胆", 2: "固执", 3: "调皮", 4: "勇敢", 5: "逞强",
@@ -158,7 +158,7 @@ async function loadNatureMap() {
 
 async function loadTalentSkillMap() {
     try {
-        const res = await fetch('/api/config/talent_skills');
+        const res = await rocoFetch('/api/config/talent_skills');
         if (res.ok) {
             const data = await res.json();
             talentSkillMap = data;
@@ -184,7 +184,7 @@ async function loadRecommendations() {
     document.getElementById('releaseList').innerHTML = '';
 
     try {
-        const res = await fetch(`/api/release_recommendations?page=1&page_size=5000`);
+        const res = await rocoFetch(`/api/release_recommendations?page=1&page_size=5000`);
         if (!res.ok) {
             summaryArea.innerHTML = `<div class="summary-loading" style="color:#e74c3c;">加载失败: ${res.status}</div>`;
             return;
@@ -295,6 +295,10 @@ function renderPage() {
     }
 
     container.innerHTML = pageData.map(g => renderSpeciesGroup(g)).join('');
+    container.querySelectorAll(".config-species-btn").forEach((button) => {
+        const group = pageData.find((item) => String(item.base_id) === button.dataset.baseId);
+        button.addEventListener("click", () => openSpeciesConfig(Number(button.dataset.baseId), group ? group.species_name : ""));
+    });
 }
 
 // ====== 渲染品种分组 ======
@@ -319,7 +323,7 @@ function renderSpeciesGroup(group) {
                         <span class="text-recommended">建议放生 ${group.recommended_count} 只</span>)
                     </span>
                 </span>
-                <button class="config-species-btn" onclick="openSpeciesConfig(${group.base_id}, '${escapeHtml(group.species_name)}')">配置此品种</button>
+                <button class="config-species-btn" data-base-id="${Number(group.base_id) || 0}">配置此品种</button>
             </div>
             ${memberHtml}
             <div class="species-pet-grid">
@@ -429,7 +433,7 @@ async function saveSingleConfig() {
     const keepCount = parseInt(document.getElementById('speciesKeepCount').value) || 3;
 
     try {
-        const res = await fetch('/api/species_preferences', {
+        const res = await rocoFetch('/api/species_preferences', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -460,7 +464,7 @@ async function openConfigModal() {
     tbody.innerHTML = '<tr><td colspan="3">加载中...</td></tr>';
 
     try {
-        const res = await fetch('/api/species_preferences');
+        const res = await rocoFetch('/api/species_preferences');
         const data = await res.json();
         renderConfigTable(data.preferences);
     } catch (e) {
@@ -523,7 +527,7 @@ async function saveAllConfigs() {
     });
 
     try {
-        const res = await fetch('/api/species_preferences', {
+        const res = await rocoFetch('/api/species_preferences', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ preferences: prefs })

@@ -1,23 +1,23 @@
 import json
 import logging
 import os
-import time
 import sqlite3
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Support both direct execution and import from backend
 try:
     from api_client import (
-        gateway_request,
-        fetch_user_info,
         fetch_refresh_time,
+        fetch_user_info,
+        gateway_request,
     )
 except ImportError:
     from scripts.api_client import (
-        gateway_request,
-        fetch_user_info,
         fetch_refresh_time,
+        fetch_user_info,
+        gateway_request,
     )
 
 # Resolve paths relative to project root
@@ -47,8 +47,8 @@ def mark_absent_inactive(cursor, present: set[int]) -> int:
     return released
 
 
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
+def init_db(db_path: str | None = None):
+    conn = sqlite3.connect(db_path or DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     cursor.execute("""
@@ -181,7 +181,7 @@ def init_db():
         cursor.execute("ALTER TABLE pet_instances ADD COLUMN talent_skill INTEGER DEFAULT 0")
     except sqlite3.OperationalError:
         pass
-        
+
     try:
         cursor.execute("ALTER TABLE pet_base_info ADD COLUMN itemId INTEGER")
     except sqlite3.OperationalError:
@@ -242,20 +242,12 @@ def init_db():
     )
     """)
 
-    # Seed pet_natures data
-    natures = [
-        (1, "大胆", "物防", "物攻"), (2, "固执", "物攻", "魔攻"), (3, "调皮", "物攻", "魔抗"),
-        (4, "勇敢", "物攻", "速度"), (5, "逞强", "物攻", "生命"), (6, "稳重", "魔攻", "物防"),
-        (7, "天真", "速度", "魔抗"), (8, "懒散", "物防", "魔防"), (9, "悠闲", "物防", "速度"),
-        (10, "坦率", "物防", "生命"), (11, "聪明", "魔攻", "物攻"), (12, "专注", "魔攻", "物防"),
-        (13, "偏执", "魔攻", "魔防"), (14, "冷静", "魔攻", "速度"), (15, "理性", "魔攻", "生命"),
-        (16, "警惕", "魔防", "物攻"), (17, "温顺", "魔抗", "物防"), (18, "害羞", "魔防", "魔攻"),
-        (19, "慎重", "魔抗", "速度"), (20, "焦虑", "魔防", "生命"), (21, "胆小", "速度", "物攻"),
-        (22, "急躁", "速度", "物防"), (23, "开朗", "速度", "魔攻"), (24, "莽撞", "速度", "魔防"),
-        (25, "热情", "速度", "生命"), (26, "沉默", "生命", "物攻"), (27, "忧郁", "生命", "物防"),
-        (28, "平和", "生命", "魔攻"), (29, "粗心", "生命", "魔防"), (30, "踏实", "生命", "速度")
-    ]
-    cursor.executemany("INSERT OR REPLACE INTO pet_natures (id, name, plus_stat, minus_stat) VALUES (?, ?, ?, ?)", natures)
+    try:
+        from natures import seed_natures
+    except ImportError:
+        from scripts.natures import seed_natures
+
+    seed_natures(cursor, CONF_DIR)
 
     # Create settings table for key-value storage
     cursor.execute("""
@@ -402,7 +394,7 @@ def run_sync(progress_callback=None):
     if missing_ids:
         # 加载 PETBASE_CONF.json 到内存字典
         conf_path = os.path.join(CONF_DIR, 'PETBASE_CONF.json')
-        with open(conf_path, 'r', encoding='utf-8') as f:
+        with open(conf_path, encoding='utf-8') as f:
             base_conf_list = json.load(f)
         base_conf_map = {item["id"]: item for item in base_conf_list}
 
@@ -486,8 +478,7 @@ def run_sync(progress_callback=None):
 
         if row:
             cursor.execute("UPDATE pet_instances SET talent_rank = ? WHERE serial_num = ?", (trank, sn))
-            if row["height"] is None or row["catch_ball"] is None:
-                needs_detail.append((pet, "update"))
+            needs_detail.append((pet, "update"))
         else:
             needs_detail.append((pet, "new"))
 
@@ -517,15 +508,39 @@ def run_sync(progress_callback=None):
             if action == "update":
                 t_cursor.execute("""
                 UPDATE pet_instances SET
-                    base_id = ?, name = ?,
+                    base_id = ?, name = ?, level = ?, nature = ?, talent_rank = ?,
+                    hp = ?, adAttack = ?, apAttack = ?, adDefense = ?, apDefense = ?, speed = ?,
+                    hp_race = ?, adAttack_race = ?, apAttack_race = ?, adDefense_race = ?, apDefense_race = ?, speed_race = ?,
+                    hp_talent = ?, adAttack_talent = ?, apAttack_talent = ?, adDefense_talent = ?, apDefense_talent = ?, speed_talent = ?,
                     medal = ?, catch_ball = ?, height = ?, weight = ?,
                     bloodline = ?, skill_dam_type = ?,
                     equip_skill_1 = ?, equip_skill_2 = ?, equip_skill_3 = ?, equip_skill_4 = ?,
                     mutation = ?, talent_skill = ?
                 WHERE serial_num = ?
                 """, (
-                    pet["PetBaseId"],  # PetBaseId（来自列表 API）
+                    pet["PetBaseId"],
                     detail.get("PetName", ""),
+                    detail.get("SpiritLevel", 0),
+                    detail.get("PetNature", 0),
+                    trank,
+                    detail.get("MaxHp", 0),
+                    detail.get("PhyAttack", 0),
+                    detail.get("MagAttack", 0),
+                    detail.get("PhyDefense", 0),
+                    detail.get("MagDefense", 0),
+                    detail.get("Speed", 0),
+                    detail.get("MaxHpRace", 0),
+                    detail.get("PhyAttackRace", 0),
+                    detail.get("MagAttackRace", 0),
+                    detail.get("PhyDefenseRace", 0),
+                    detail.get("MagDefenseRace", 0),
+                    detail.get("SpeedRace", 0),
+                    detail.get("MaxHpTalent", 0),
+                    detail.get("PhyAttackTalent", 0),
+                    detail.get("MagAttackTalent", 0),
+                    detail.get("PhyDefenseTalent", 0),
+                    detail.get("MagDefenseTalent", 0),
+                    detail.get("SpeedTalent", 0),
                     detail.get("PetMedal", ""),
                     detail.get("PetCatchBall", 0),
                     detail.get("PetHeight", 0),

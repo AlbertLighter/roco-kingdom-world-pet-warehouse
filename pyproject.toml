@@ -1,12 +1,11 @@
 [project]
 name = "roco-kingdom-world-pet-warehouse"
 version = "0.1.0"
-description = "洛克王国手游宠物繁育辅助系统"
+description = "洛克王国：世界的本地精灵仓库，查看盒子、推荐繁育和放生。服务只监听本机。"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.136.1",
-    "mwclient>=0.11.0",
     "python-dotenv>=1.2.2",
     "requests>=2.33.1",
     "uvicorn>=0.46.0",

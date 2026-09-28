@@ -43,7 +43,7 @@ def _gcp(command: int, sequence: int, extra: bytes, body: bytes) -> bytes:
 
 
 def _page_body() -> bytes:
-    name = "小蓝灵".encode("utf-8")
+    name = "小蓝灵".encode()
     attr = _field_varint(1, 125) + _field_varint(2, 32) + _field_varint(3, 310)
     attrs = _field_bytes(1, attr)
     skill = _field_varint(1, 222) + _field_varint(4, 1) + _field_varint(5, 1)

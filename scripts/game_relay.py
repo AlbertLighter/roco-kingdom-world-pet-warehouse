@@ -48,15 +48,6 @@ def is_admin() -> bool:
         return False
 
 
-def local_ipv4() -> str:
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            sock.connect(("8.8.8.8", 80))
-            return sock.getsockname()[0]
-    except OSError:
-        return "127.0.0.1"
-
-
 def pop_packet(buf: bytearray) -> bytes | None:
     """从字节流切出一个 GCP 包。魔数错开时向前找，不把连接拆掉。"""
     while True:
@@ -223,7 +214,7 @@ def run_relay(seconds: int | None, on_s2c, progress=None, stop_when=None, on_fra
         raise RuntimeError("改道同步需要 pydivert 和 psutil。在项目根目录执行 uv sync --extra capture") from exc
 
     deadline = None if seconds is None else time.time() + max(10, min(int(seconds), 600))
-    host = local_ipv4()
+    host = "127.0.0.1"
     conns = _ConnMap()
     stop = threading.Event()
     _active_stop = stop
@@ -346,7 +337,7 @@ def run_relay(seconds: int | None, on_s2c, progress=None, stop_when=None, on_fra
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
-            sock.bind(("0.0.0.0", PROXY_PORT))
+            sock.bind((host, PROXY_PORT))
         except OSError as exc:
             stats["error"] = f"本机端口 {PROXY_PORT} 绑定失败: {exc}"
             report(stats["error"])
@@ -359,7 +350,7 @@ def run_relay(seconds: int | None, on_s2c, progress=None, stop_when=None, on_fra
         while not stop.is_set():
             try:
                 client, addr = sock.accept()
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except OSError:
                 break

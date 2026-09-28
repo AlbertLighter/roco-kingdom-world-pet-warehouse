@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import logging
 import threading
-import time
 from pathlib import Path
 
 try:
@@ -299,12 +298,7 @@ def upsert_pets(records: list[dict], *, db_path: str | None = None, mark_missing
         return {"new": 0, "updated": 0, "total": 0, "released": 0, "complete": mark_missing}
 
     target = db_path or fetcher.DB_PATH
-    previous = fetcher.DB_PATH
-    fetcher.DB_PATH = target
-    try:
-        conn = fetcher.init_db()
-    finally:
-        fetcher.DB_PATH = previous
+    conn = fetcher.init_db(target)
 
     _ensure_base_info(conn, {row["base_id"] for row in records}, report)
     cursor = conn.cursor()

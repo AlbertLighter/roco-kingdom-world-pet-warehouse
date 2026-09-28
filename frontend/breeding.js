@@ -14,10 +14,10 @@ let talentSkillMap = {};
 async function fetchConfigs() {
     try {
         const [blRes, tpRes, mdRes, tsRes] = await Promise.all([
-            fetch('/api/config/bloodlines'),
-            fetch('/api/config/types'),
-            fetch('/api/config/medals'),
-            fetch('/api/config/talent_skills')
+            rocoFetch('/api/config/bloodlines'),
+            rocoFetch('/api/config/types'),
+            rocoFetch('/api/config/medals'),
+            rocoFetch('/api/config/talent_skills')
         ]);
         bloodlineMap = await blRes.json();
         typeMap = await tpRes.json();
@@ -288,7 +288,7 @@ function loadConfig() {
 
 async function init() {
     await fetchConfigs();
-    const resBase = await fetch('/api/base_pets');
+    const resBase = await rocoFetch('/api/base_pets');
     allBasePets = await resBase.json();
     renderTargetOptions();
     const natures = "大胆,固执,调皮,勇敢,逞强,稳重,天真,懒散,悠闲,坦率,聪明,专注,偏执,冷静,理性,警惕,温顺,害羞,慎重,焦虑,胆小,急躁,开朗,莽撞,热情,沉默,忧郁,平和,粗心,踏实".split(',');
@@ -307,7 +307,7 @@ async function init() {
 }
 
 function setGender(sn, gender) {
-    fetch('/api/update_gender', {
+    rocoFetch('/api/update_gender', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({serial_num: sn, gender: gender})
@@ -319,7 +319,7 @@ function setGender(sn, gender) {
 // ---- 刷新单张精灵卡片 ----
 async function refreshPetCard(serialNum) {
     try {
-        const res = await fetch(`/api/pets/${serialNum}/sync`, { method: 'POST' });
+        const res = await rocoFetch(`/api/pets/${serialNum}/sync`, { method: 'POST' });
         if (!res.ok) return;
         const pet = await res.json();
         const card = document.querySelector(`.pet-card[data-serial="${serialNum}"]`);
@@ -343,7 +343,7 @@ recommendBtn.addEventListener('click', async () => {
     if (!config.targetPetId) return alert('请选择目标精灵');
     saveToHistory();
     recommendationResults.innerHTML = '<div style="text-align:center;margin-top:100px;">正在匹配最佳父母...</div>';
-    const res = await fetch('/api/recommend_parents', {
+    const res = await rocoFetch('/api/recommend_parents', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
@@ -359,7 +359,7 @@ recommendBtn.addEventListener('click', async () => {
     // 获取已占用的精灵集合
     let occupiedSerials = new Set();
     try {
-        const slotsRes = await fetch('/api/breeding_slots');
+        const slotsRes = await rocoFetch('/api/breeding_slots');
         const slots = await slotsRes.json();
         slots.forEach(s => {
             if (s.father) occupiedSerials.add(s.father.serial_num);
@@ -420,7 +420,7 @@ function renderRecommendations(data, occupiedSerials) {
                 btn.disabled = true;
                 btn.textContent = '加入中...';
                 try {
-                    const res = await fetch('/api/breeding_slots/add', {
+                    const res = await rocoFetch('/api/breeding_slots/add', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
                         body: JSON.stringify({
@@ -498,7 +498,7 @@ function renderSlots() {
             e.stopPropagation();
             const sid = parseInt(e.currentTarget.dataset.slot);
             try {
-                await fetch(`/api/breeding_slots/${sid}`, { method: 'DELETE' });
+                await rocoFetch(`/api/breeding_slots/${sid}`, { method: 'DELETE' });
                 await loadBreedingSlots();
             } catch (err) {
                 slotsStatus.textContent = '删除失败';
@@ -542,7 +542,7 @@ function renderSlots() {
 
 async function loadBreedingSlots() {
     try {
-        const slotsRes = await fetch('/api/breeding_slots');
+        const slotsRes = await rocoFetch('/api/breeding_slots');
         breedingSlots = await slotsRes.json();
         renderSlots();
     } catch (e) {
@@ -571,7 +571,7 @@ async function saveBreedingSlots() {
     }
     try {
         slotsStatus.textContent = '保存中...';
-        const res = await fetch('/api/breeding_slots', {
+        const res = await rocoFetch('/api/breeding_slots', {
             method: 'PUT',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(payload)
@@ -591,7 +591,7 @@ async function saveBreedingSlots() {
 async function checkSlotsUpdate() {
     slotsStatus.textContent = '检测中...';
     try {
-        const res = await fetch('/api/check_breeding_slots');
+        const res = await rocoFetch('/api/check_breeding_slots');
         const results = await res.json();
         let changedCount = 0;
         results.forEach(r => {

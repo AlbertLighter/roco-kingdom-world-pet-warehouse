@@ -13,11 +13,11 @@
   result = sync_gender_from_export(progress_callback=my_cb)
 """
 
+import glob
 import json
+import logging
 import os
 import sqlite3
-import glob
-import logging
 
 # Resolve paths relative to project root
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -49,7 +49,7 @@ def _scan_file_for_gender(filepath, progress_callback=None):
     if progress_callback:
         progress_callback(f"正在解析 {os.path.basename(filepath)}...", 0, 0)
 
-    with open(filepath, "r", encoding="utf-8") as f:
+    with open(filepath, encoding="utf-8") as f:
         data = json.load(f)
 
     gid_gender = {}

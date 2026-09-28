@@ -1,21 +1,22 @@
-import os
 import json
-import requests
 import logging
-from urllib3.exceptions import InsecureRequestWarning
+import os
 from urllib.parse import quote
+
+import requests
 from dotenv import load_dotenv
+from urllib3.exceptions import InsecureRequestWarning
 
 # 同步日志（复用后端 logger 配置）
 _api_logger = logging.getLogger("sync")
+
+load_dotenv()
 
 REQUESTS_VERIFY = os.getenv("REQUESTS_VERIFY", "true").lower() == "true"
 TIMEOUT = (10, 30)  # (connect, read) seconds
 
 if not REQUESTS_VERIFY:
     requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
-
-load_dotenv()
 
 X_MCUBE_ACT_ID = os.getenv("X_MCUBE_ACT_ID", "E80EH8LJ")
 AUTHORIZATION_TOKEN = os.getenv("AUTHORIZATION_TOKEN")
@@ -69,7 +70,7 @@ def direct_login():
     if not ACCESS_TOKEN or not REFRESH_TOKEN:
         _api_logger.warning("缺少 ACCESS_TOKEN 或 REFRESH_TOKEN。%s", _credential_shape())
         return False
-        
+
     payload = {
         "account_type": "qq",
         "appid": APPID,
@@ -81,7 +82,7 @@ def direct_login():
         "content-type": "application/json",
         "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Mac MacWechat/WMPF MacWechat/3.8.7(0x13080712) UnifiedPCMacWechat(0xf2641701) XWEB/18788"
     }
-    
+
     try:
         _api_logger.info(
             "正在刷新登录会话... %s %s",
@@ -128,17 +129,17 @@ def gateway_request(req_path, req_param, req_type="POST", retry=True):
     }
     data_str = json.dumps(payload, separators=(',', ':'))
     body = f"data={quote(data_str)}"
-    
+
     headers = {
         "authorization": AUTHORIZATION_TOKEN,
         "content-type": "application/x-www-form-urlencoded",
         "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Mac MacWechat/WMPF MacWechat/3.8.7(0x13080712) UnifiedPCMacWechat(0xf2641701) XWEB/18788"
     }
-    
+
     try:
         response = requests.post(GATEWAY_URL, data=body, headers=headers, proxies=PROXIES, verify=REQUESTS_VERIFY, timeout=TIMEOUT)
         res_json = response.json()
-        
+
         # Handle expired session
         if res_json.get("code") == 4001 and retry:
             _api_logger.warning("登录会话过期，正在自动刷新... path=%s", req_path)

@@ -26,7 +26,7 @@ async function loadPackets() {
         opcode: document.getElementById("opcode").value.trim(),
         q: document.getElementById("query").value.trim(),
     });
-    const res = await fetch("/api/packets?" + params.toString());
+    const res = await rocoFetch("/api/packets?" + params.toString());
     const data = await res.json();
     total = data.total || 0;
     const pages = Math.max(1, Math.ceil(total / pageSize));
@@ -35,7 +35,28 @@ async function loadPackets() {
     (data.data || []).forEach((row) => {
         const tr = document.createElement("tr");
         if (row.id === selectedId) tr.className = "active";
-        tr.innerHTML = `<td>${row.ts || ""}</td><td class="dir-${row.direction}">${row.direction || ""}</td><td>${row.opcode_name || row.opcode_hex}<br><small>${row.opcode_hex}</small></td><td>${row.summary || ""}</td>`;
+        const directionCell = document.createElement("td");
+        directionCell.className = `dir-${row.direction || ""}`;
+        directionCell.textContent = row.direction || "";
+        const opcodeCell = document.createElement("td");
+        opcodeCell.textContent = row.opcode_name || row.opcode_hex || "";
+        const opcodeHex = document.createElement("small");
+        opcodeHex.textContent = row.opcode_hex || "";
+        opcodeCell.appendChild(document.createElement("br"));
+        opcodeCell.appendChild(opcodeHex);
+        [row.ts || "", null, null, row.summary || ""].forEach((text, index) => {
+            if (index === 1) {
+                tr.appendChild(directionCell);
+                return;
+            }
+            if (index === 2) {
+                tr.appendChild(opcodeCell);
+                return;
+            }
+            const cell = document.createElement("td");
+            cell.textContent = text;
+            tr.appendChild(cell);
+        });
         tr.addEventListener("click", () => openPacket(row.id));
         bodyEl.appendChild(tr);
     });
@@ -47,21 +68,29 @@ async function loadPackets() {
 async function openPacket(id) {
     selectedId = id;
     lastJson = "";
-    const res = await fetch(`/api/packets/${id}`);
+    const res = await rocoFetch(`/api/packets/${id}`);
     if (!res.ok) {
         detailView.textContent = "读取失败";
         return;
     }
     const item = await res.json();
     detailTitle.textContent = `${item.opcode_name}  ${item.opcode_hex}`;
-    detailMeta.innerHTML = [
+    detailMeta.textContent = "";
+    [
         ["时间", item.ts],
         ["方向", item.direction],
         ["连接", item.session || ""],
         ["来源", item.source || ""],
         ["长度", `${item.body_len || 0} 字节${item.truncated ? "（已截断）" : ""}`],
         ["摘要", item.summary || ""],
-    ].map(([name, value]) => `<span>${name}</span><div>${value || ""}</div>`).join("");
+    ].forEach(([name, value]) => {
+        const label = document.createElement("span");
+        label.textContent = name;
+        const content = document.createElement("div");
+        content.textContent = value || "";
+        detailMeta.appendChild(label);
+        detailMeta.appendChild(content);
+    });
     const hex = item.app_body_hex || "";
     detailView.textContent = hex ? `载荷 hex（前 512 字符）\n${hex.slice(0, 512)}${hex.length > 512 ? "\n…" : ""}` : "这条消息没有应用层载荷";
     document.getElementById("parseBtn").disabled = false;
@@ -79,7 +108,7 @@ async function openPacket(id) {
 }
 
 async function readSse(url, options) {
-    const res = await fetch(url, options);
+    const res = await rocoFetch(url, options);
     if (!res.ok) {
         const err = await res.json();
         throw new Error(err.detail || "请求失败");
@@ -112,7 +141,7 @@ document.getElementById("nextBtn").addEventListener("click", () => {
 
 document.getElementById("parseBtn").addEventListener("click", async () => {
     if (!selectedId) return;
-    const res = await fetch(`/api/packets/${selectedId}/parse`, { method: "POST" });
+    const res = await rocoFetch(`/api/packets/${selectedId}/parse`, { method: "POST" });
     const data = await res.json();
     if (!res.ok) { detailView.textContent = data.detail || "解析失败"; return; }
     lastJson = JSON.stringify(data, null, 2);
@@ -124,7 +153,7 @@ document.getElementById("parseBtn").addEventListener("click", async () => {
 
 document.getElementById("serializeBtn").addEventListener("click", async () => {
     if (!selectedId) return;
-    const res = await fetch(`/api/packets/${selectedId}/serialize`, { method: "POST" });
+    const res = await rocoFetch(`/api/packets/${selectedId}/serialize`, { method: "POST" });
     const data = await res.json();
     if (!res.ok) { detailView.textContent = data.detail || "序列化失败"; return; }
     lastJson = data.json || JSON.stringify(data.export_entry, null, 2);
@@ -151,7 +180,7 @@ document.getElementById("downloadBtn").addEventListener("click", () => {
 
 document.getElementById("applyBtn").addEventListener("click", async () => {
     if (!selectedId) return;
-    const res = await fetch(`/api/packets/${selectedId}/apply`, { method: "POST" });
+    const res = await rocoFetch(`/api/packets/${selectedId}/apply`, { method: "POST" });
     const data = await res.json();
     jobLog.textContent = res.ok ? `已写入仓库：新增 ${data.new || 0}，更新 ${data.updated || 0}` : (data.detail || "写入失败");
 });
@@ -160,7 +189,7 @@ document.getElementById("importBtn").addEventListener("click", async () => {
     setBusy(true);
     jobLog.textContent = "正在载入导出…";
     try {
-        const res = await fetch("/api/packets/import_exports", { method: "POST" });
+        const res = await rocoFetch("/api/packets/import_exports", { method: "POST" });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || "载入失败");
         jobLog.textContent = `已从 ${data.files} 个文件载入 ${data.saved} 条`;
@@ -176,7 +205,7 @@ document.getElementById("recordBtn").addEventListener("click", async () => {
     const recordBtn = document.getElementById("recordBtn");
     if (recordBtn.dataset.recording === "1") {
         recordBtn.disabled = true;
-        await fetch("/api/packets/stop", { method: "POST" });
+        await rocoFetch("/api/packets/stop", { method: "POST" });
         return;
     }
     recordBtn.dataset.recording = "1";
@@ -224,7 +253,7 @@ document.getElementById("replayBtn").addEventListener("click", async () => {
 
 document.getElementById("clearBtn").addEventListener("click", async () => {
     if (!window.confirm("清空全部抓包记录？")) return;
-    await fetch("/api/packets", { method: "DELETE" });
+    await rocoFetch("/api/packets", { method: "DELETE" });
     selectedId = null;
     detailTitle.textContent = "选择一条消息";
     detailMeta.innerHTML = "";

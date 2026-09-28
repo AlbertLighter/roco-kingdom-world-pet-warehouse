@@ -10,16 +10,15 @@ from __future__ import annotations
 from pathlib import Path
 
 from scripts.rocom_gcp import (
+    C2S,
     CMD_ACK,
     CMD_DATA,
-    C2S,
     S2C,
     app_body,
     app_opcode,
     decrypt_matching,
     deframe,
     extract_key,
-    valid_plain,
 )
 
 

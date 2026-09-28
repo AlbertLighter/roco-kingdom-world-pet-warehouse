@@ -30,7 +30,7 @@
 | HTTP 同步 | `uv run python scripts/fetcher.py` |
 | 更新子模块 | `./scripts/sync_conf.sh` |
 
-根目录 `main.py` 不启动服务。Windows 用 `start.bat`（纯 ASCII、CRLF，会申请管理员权限）。
+Windows 用 `start.bat`（纯 ASCII、CRLF，会申请管理员权限）。服务只监听 127.0.0.1。
 
 ## 约定
 

@@ -215,7 +215,7 @@ def running() -> bool:
 
 def read_selected_count(hwnd: int, calib: dict) -> int | None:
     try:
-        from PIL import Image, ImageDraw, ImageFont, ImageChops
+        from PIL import Image, ImageChops, ImageDraw, ImageFont
     except ImportError as exc:
         raise RuntimeError("核对已选数量需要 Pillow。请执行 uv sync --extra capture") from exc
     point = calib["points"]["selected"]
@@ -292,6 +292,16 @@ def _bitmap_info(width: int, height: int) -> BITMAPINFOHEADER:
     return info
 
 
+def steps_between(previous: int | None, box_id: int) -> int:
+    """从当前盒到目标盒要点几次「下一盒」。盒子编号必须往前走。"""
+    if previous is None:
+        return 0
+    gap = int(box_id) - int(previous)
+    if gap <= 0:
+        raise ValueError(f"盒子从 {previous} 到 {box_id}，下一盒到不了，已停止")
+    return gap
+
+
 def run_release(groups: list[tuple[int, list[int]]], progress=None) -> dict:
     """groups 是 (盒子编号, 格位列表)，按盒子编号排序。格位是 0 到 29。"""
     calib = load_calibration()
@@ -306,12 +316,31 @@ def run_release(groups: list[tuple[int, list[int]]], progress=None) -> dict:
         raise RuntimeError("游戏窗口大小和校准时不一致，请重新校准")
     _stop.clear()
     clicked = 0
+    previous = None
+    nxt = calib["points"]["next"]
     if groups:
-        progress and progress(f"请先打开 {groups[0][0]} 号精灵盒子，并处于勾选模式", 0, 0)
+        progress and progress(
+            f"请先打开 {groups[0][0]} 号精灵盒子，并处于勾选模式。格子来自上次记录，若刚在游戏里挪过精灵，先重新抓包。",
+            0,
+            0,
+        )
         time.sleep(1.5)
     for box_id, slots in groups:
         if _stop.is_set() or clicked >= MAX_CLICKS:
             break
+        gap = steps_between(previous, box_id)
+        if gap:
+            progress and progress(f"从 {previous} 号翻到 {box_id} 号，点 {gap} 次下一盒", clicked, MAX_CLICKS)
+        for _ in range(gap):
+            if _stop.is_set():
+                break
+            click_client(hwnd, nxt["x"], nxt["y"])
+            time.sleep(0.45)
+        if _stop.is_set():
+            break
+        before = read_selected_count(hwnd, calib)
+        if before != 0:
+            raise RuntimeError(f"{box_id} 号盒子开始前已选数量是 {before}，没有点格子，也没有点放生")
         take = slots[: MAX_CLICKS - clicked]
         progress and progress(f"{box_id} 号盒子要点 {len(take)} 格", clicked, MAX_CLICKS)
         for slot in take:
@@ -330,7 +359,6 @@ def run_release(groups: list[tuple[int, list[int]]], progress=None) -> dict:
             time.sleep(0.4)
             click_client(hwnd, confirm["x"], confirm["y"])
         progress and progress(f"{box_id} 号盒子已点击放生 {len(take)} 只", clicked, MAX_CLICKS)
-        nxt = calib["points"]["next"]
-        click_client(hwnd, nxt["x"], nxt["y"])
+        previous = box_id
         time.sleep(0.4)
     return {"clicked": clicked, "stopped": _stop.is_set()}

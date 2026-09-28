@@ -34,11 +34,12 @@ class PacketStoreTests(unittest.TestCase):
         packet_store.DB_PATH = Path(self.temp.name) / "packets.db"
 
     def tearDown(self):
+        packet_store.close_db()
         packet_store.DB_PATH = self._old
         self.temp.cleanup()
 
     def test_parse_and_serialize_pet_page(self):
-        name = "小蓝灵".encode("utf-8")
+        name = "小蓝灵".encode()
         pet = b"".join([
             _field_varint(1, 42),
             _field_bytes(3, name),
@@ -63,8 +64,8 @@ class PacketStoreTests(unittest.TestCase):
         self.assertIn("小蓝灵", serialized["json"])
 
     def test_other_opcode_serializes_wire_fields(self):
-        body = _field_varint(1, 7) + _field_bytes(2, "abc".encode())
-        message = Message("c2s", 0x0102, "sess", b"", body)
+        body = _field_varint(1, 7) + _field_bytes(2, b"abc")
+        message = Message("s2c", 0x0102, "sess", b"", body)
         message_id = packet_store.record_message(message, source="test")
         parsed = packet_store.parse_message(message_id)
         self.assertEqual(parsed["kind"], "wire")

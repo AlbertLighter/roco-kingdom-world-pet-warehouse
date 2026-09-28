@@ -4,10 +4,10 @@ import time
 import unittest
 from pathlib import Path
 
+import scripts.fetcher as fetcher
 from scripts.capture_sync import apply_captured_event, pet_record, upsert_pets
 from scripts.fetcher import init_db
 from scripts.rocom_pet import find_live_pets
-import scripts.fetcher as fetcher
 
 
 def _varint(value: int) -> bytes:

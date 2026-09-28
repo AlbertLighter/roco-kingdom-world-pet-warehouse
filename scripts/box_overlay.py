@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 import sys
-import urllib.request
 import tkinter as tk
+import urllib.request
 
 API = "http://127.0.0.1:8000"
 

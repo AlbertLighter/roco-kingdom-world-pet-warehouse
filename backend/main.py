@@ -1,18 +1,19 @@
-import sqlite3
-import json
 import itertools
-import queue
-import threading
-import sys
-import os
-import time
+import json
 import logging
+import os
+import queue
+import secrets
+import sqlite3
+import sys
+import threading
+import time
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Query, HTTPException, Body
-from fastapi.responses import StreamingResponse
-from fastapi.staticfiles import StaticFiles
+
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Optional, List
+from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 # Add project root to path so we can import scripts
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -49,7 +50,7 @@ def _load_json(filename):
         return None
     if filename not in _config_cache:
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 _config_cache[filename] = json.load(f)
         except (json.JSONDecodeError, OSError) as e:
             _sync_logger.error(f"配置加载失败 {filename}: {e}")
@@ -81,20 +82,11 @@ def get_talent_skill_map():
         return {}
     return {item["id"]: {"name": item["name"], "desc": item.get("desc", "")} for item in data}
 
-def get_nature_map():
-    """性格映射，包含 buff/debuff 对应的属性下标 (0-5 对应 hp/adAttack/adDefense/apAttack/apDefense/speed)"""
-    data = _load_json("PET_BLOOD_CONF.json")
-    if not data:
-        return {}
-    # PETBASE_CONF 的 nature_ids 字段，但这里直接从数据库获取
-    return {}
-
-
 def _populate_handbook_ids(cursor):
     """从 PET_HANDBOOK.json 读取图鉴编号映射，写入 pet_base_info.handbook_id"""
     try:
         path = os.path.join(CONF_DIR, "PET_HANDBOOK.json")
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             handbook_data = json.load(f)
         cursor.execute("PRAGMA table_info(pet_base_info)")
         cols = {row[1] for row in cursor.fetchall()}
@@ -198,21 +190,30 @@ def init_db():
         minus_stat TEXT
     )
     """)
-    natures = [
-        (1, "大胆", "物攻", "物防"), (2, "固执", "物攻", "魔攻"), (3, "调皮", "物攻", "魔抗"),
-        (4, "勇敢", "物攻", "速度"), (5, "逞强", "物攻", "生命"), (6, "稳重", "物防", "物攻"),
-        (7, "天真", "物防", "魔攻"), (8, "懒散", "物防", "魔防"), (9, "悠闲", "物防", "速度"),
-        (10, "坦率", "物防", "生命"), (11, "聪明", "魔攻", "物攻"), (12, "专注", "魔攻", "物防"),
-        (13, "偏执", "魔攻", "魔防"), (14, "冷静", "魔攻", "速度"), (15, "理性", "魔攻", "生命"),
-        (16, "警惕", "魔防", "物攻"), (17, "温顺", "魔抗", "物防"), (18, "害羞", "魔防", "魔攻"),
-        (19, "慎重", "魔抗", "速度"), (20, "焦虑", "魔防", "生命"), (21, "胆小", "速度", "物攻"),
-        (22, "急躁", "速度", "物防"), (23, "开朗", "速度", "魔攻"), (24, "莽撞", "速度", "魔防"),
-        (25, "热情", "速度", "生命"), (26, "沉默", "生命", "物攻"), (27, "忧郁", "生命", "物防"),
-        (28, "平和", "生命", "魔攻"), (29, "粗心", "生命", "魔防"), (30, "踏实", "生命", "速度")
-    ]
-    cursor.executemany("INSERT OR REPLACE INTO pet_natures (id, name, plus_stat, minus_stat) VALUES (?, ?, ?, ?)", natures)
+    from scripts.natures import seed_natures
 
-    # settings: 键值存储
+    seed_natures(cursor, CONF_DIR)
+
+    # 繁育槽位要先建表，再补旧库缺的列。反过来的话，全新库会缺字段。
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS breeding_slots (
+        slot_id INTEGER PRIMARY KEY CHECK(slot_id BETWEEN 1 AND 5),
+        target_base_id INTEGER,
+        father_serial INTEGER,
+        mother_serial INTEGER,
+        updated_at TEXT DEFAULT (datetime('now', 'localtime')),
+        nature_id INTEGER,
+        talents TEXT,
+        use_king_ball INTEGER DEFAULT 0,
+        king_ball_attr TEXT,
+        breed_big_size INTEGER DEFAULT 0,
+        FOREIGN KEY (father_serial) REFERENCES pet_instances(serial_num),
+        FOREIGN KEY (mother_serial) REFERENCES pet_instances(serial_num)
+    )
+    """)
+    for i in range(1, 6):
+        cursor.execute("INSERT OR IGNORE INTO breeding_slots (slot_id) VALUES (?)", (i,))
+
     # ---- 向后兼容迁移：旧数据库缺少的列 ----
     _migrate_cols = [
         ("pet_instances", "bloodline", "INTEGER DEFAULT 0"),
@@ -251,23 +252,6 @@ def init_db():
         value TEXT
     )
     """)
-
-    # egg_group_mapping: 蛋组映射
-    # breeding_slots: 家园繁育槽位（5组×父/母/目标）
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS breeding_slots (
-        slot_id INTEGER PRIMARY KEY CHECK(slot_id BETWEEN 1 AND 5),
-        target_base_id INTEGER,
-        father_serial INTEGER,
-        mother_serial INTEGER,
-        updated_at TEXT DEFAULT (datetime('now', 'localtime')),
-        FOREIGN KEY (father_serial) REFERENCES pet_instances(serial_num),
-        FOREIGN KEY (mother_serial) REFERENCES pet_instances(serial_num)
-    )
-    """)
-    # 确保5个默认槽位存在
-    for i in range(1, 6):
-        cursor.execute("INSERT OR IGNORE INTO breeding_slots (slot_id) VALUES (?)", (i,))
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS egg_group_mapping (
@@ -309,10 +293,19 @@ def init_db():
     print("数据库已初始化（表已就绪）")
 
 
+API_TOKEN = secrets.token_urlsafe(32)
+_LOCAL_ORIGINS = ["http://127.0.0.1:8000", "http://localhost:8000"]
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期：启动时初始化数据库"""
     init_db()
+    token_path = os.path.join(os.path.dirname(DB_PATH), "captures", "api.token")
+    os.makedirs(os.path.dirname(token_path), exist_ok=True)
+    with open(token_path, "w", encoding="utf-8") as handle:
+        handle.write(API_TOKEN)
+    _sync_logger.info("本机接口令牌已写入 %s", token_path)
     yield
 
 
@@ -355,13 +348,67 @@ def _end_sync() -> None:
     _sync_lock.release()
     _sync_logger.info("任务结束：%s，用时 %.1f 秒", name, elapsed)
 
-# 允许跨域
+
+def _sse(progress_queue: queue.Queue):
+    """只负责把已经启动的任务进度推出去。任务本身在返回响应前就已启动。"""
+
+    def event_stream():
+        while True:
+            try:
+                msg = progress_queue.get(timeout=60)
+            except queue.Empty:
+                yield f"data: {json.dumps({'message': '心跳...', 'current': 0, 'total': 0}, ensure_ascii=False)}\n\n"
+                continue
+            if msg.get("done"):
+                if msg.get("error"):
+                    yield f"data: {json.dumps({'error': msg['error']}, ensure_ascii=False)}\n\n"
+                else:
+                    yield f"data: {json.dumps({'done': True, 'result': msg.get('result', {})}, ensure_ascii=False)}\n\n"
+                break
+            yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+def _run_locked(name: str, worker):
+    """先启动线程再返回队列。客户端还没读响应时，线程也会自己释放锁。"""
+    if not _begin_sync(name):
+        return None
+    progress_queue: queue.Queue = queue.Queue()
+
+    def run():
+        try:
+            worker(progress_queue)
+        except Exception as exc:
+            _sync_logger.error("%s 失败: %s", name, exc)
+            progress_queue.put({"done": True, "error": str(exc)})
+        finally:
+            _end_sync()
+
+    threading.Thread(target=run, daemon=True).start()
+    return progress_queue
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_LOCAL_ORIGINS,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "X-Roco-Token"],
 )
+
+
+@app.middleware("http")
+async def require_local_token(request, call_next):
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return await call_next(request)
+    supplied = request.headers.get("x-roco-token", "")
+    if not supplied or not secrets.compare_digest(supplied, API_TOKEN):
+        return JSONResponse(status_code=401, content={"detail": "需要本机令牌"})
+    return await call_next(request)
+
+
+@app.get("/api/token")
+def api_token():
+    return {"token": API_TOKEN}
 
 # ---- 全局异常日志中间件 ----
 @app.middleware("http")
@@ -387,14 +434,14 @@ class BreedCalculator:
         self.mother_num = len(self.mother_set)
         self.king_ball_attr = king_ball_attr
         self.is_king_ball = king_ball_attr is not None
-        
+
         self.weights = {}
         for s in self.slots:
             cnt = (1 if s in self.father_set else 0) + (1 if s in self.mother_set else 0)
             self.weights[s] = 100 + 300 * cnt
-            
+
         self.total_weight = sum(self.weights.values())
-        
+
         if self.is_king_ball:
             self.effective_slots = [s for s in self.slots if s != self.king_ball_attr]
             self.effective_weights = {s: self.weights[s] for s in self.effective_slots}
@@ -404,7 +451,7 @@ class BreedCalculator:
             self.prob3 = 1.0
         else:
             self._calc_count_probs()
-            
+
     def _calc_count_probs(self):
         w1 = 0
         w2 = 100 + (300 if self.father_num == 2 else 0) + (300 if self.mother_num == 2 else 0)
@@ -445,17 +492,17 @@ class BreedCalculator:
         target_set = set(target_attrs)
         if not target_set:
             return 1.0
-        
+
         if self.is_king_ball:
             if self.king_ball_attr not in target_set:
                 return 0
-            
+
             remaining_target = [s for s in target_set if s != self.king_ball_attr]
             if len(remaining_target) > 2:
                 return 0
             if not remaining_target:
                 return 1.0
-            
+
             total_prob = 0
             for combo in itertools.combinations(self.effective_slots, 2):
                 if all(t in combo for t in remaining_target):
@@ -554,8 +601,8 @@ def get_world_teams():
 def get_pets(
     page: int = Query(1, ge=1),
     pageSize: int = Query(20, ge=1, le=100),
-    name: Optional[str] = None,
-    base_id: Optional[int] = None,
+    name: str | None = None,
+    base_id: int | None = None,
     include_inactive: bool = Query(False),
     sort: str = Query("box", pattern="^(box|time_desc|time_asc|base_id)$"),
     hide_mutation: bool = Query(False),
@@ -582,7 +629,7 @@ def get_pets(
     """
     cursor.execute(count_query, params)
     total = cursor.fetchone()[0]
-    
+
     # 排序映射
     sort_clauses = {
         "box": "CASE WHEN i.box_id IS NULL THEN 1 ELSE 0 END, i.box_id ASC, COALESCE(i.box_slot, 0) ASC, i.serial_num ASC",
@@ -616,15 +663,15 @@ def get_pets(
     ORDER BY {order_by}
     LIMIT ? OFFSET ?
     """
-    
+
     data_params = params + [pageSize, (page - 1) * pageSize]
-    
+
     cursor.execute(data_query, data_params)
     rows = cursor.fetchall()
-    
+
     pets = [dict(row) for row in rows]
     conn.close()
-    
+
     return {
         "total": total,
         "page": page,
@@ -988,51 +1035,25 @@ def sync_gender_from_export_endpoint():
     """从 data/ 目录的抓包导出文件同步精灵性别，通过 SSE 流式返回进度。"""
     if not _gender_sync_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="性别同步任务正在运行中")
+    progress_queue: queue.Queue = queue.Queue()
 
-    def event_stream():
-        import queue as _queue
+    def progress_callback(message, current=0, total=0):
+        progress_queue.put({"message": message, "current": current, "total": total})
 
-        progress_queue = _queue.Queue()
+    def run_task():
+        try:
+            from scripts.sync_gender_from_export import sync_gender_from_export
+            result = sync_gender_from_export(progress_callback=progress_callback)
+            progress_queue.put({"done": True, "result": result})
+            _sync_logger.info("性别同步完成：更新 %s 条，匹配 %s 条", result.get("updated", 0), result.get("matched", 0))
+        except Exception as exc:
+            _sync_logger.error("性别同步失败: %s", exc)
+            progress_queue.put({"done": True, "error": str(exc)})
+        finally:
+            _gender_sync_lock.release()
 
-        def progress_callback(message, current=0, total=0):
-            progress_queue.put({
-                "message": message,
-                "current": current,
-                "total": total
-            })
-
-        def run_task():
-            try:
-                from scripts.sync_gender_from_export import sync_gender_from_export
-                result = sync_gender_from_export(progress_callback=progress_callback)
-                progress_queue.put({"done": True, "result": result})
-                _sync_logger.info(f"性别同步完成：更新 {result.get('updated', 0)} 条，匹配 {result.get('matched', 0)} 条")
-            except Exception as e:
-                _sync_logger.error(f"性别同步失败: {e}")
-                progress_queue.put({"done": True, "error": str(e)})
-            finally:
-                _gender_sync_lock.release()
-
-        thread = threading.Thread(target=run_task, daemon=True)
-        thread.start()
-
-        while True:
-            try:
-                msg = progress_queue.get(timeout=60)
-            except _queue.Empty:
-                yield f"data: {json.dumps({'message': '心跳...', 'current': 0, 'total': 0})}\n\n"
-                continue
-
-            if msg.get("done"):
-                if msg.get("error"):
-                    yield f"data: {json.dumps({'error': msg['error']})}\n\n"
-                else:
-                    yield f"data: {json.dumps({'done': True, 'result': msg.get('result', {})})}\n\n"
-                break
-            else:
-                yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    threading.Thread(target=run_task, daemon=True).start()
+    return _sse(progress_queue)
 
 
 _STAT_COLS = {
@@ -1212,7 +1233,7 @@ def compute_species_recommendations(
         and p["serial_num"] not in kept_serials
     ]
     if female_pets:
-        female_pets.sort(key=lambda p: (p.get("height", 0) or 0) + (p.get("weight", 0) or 0), reverse=True)
+        female_pets.sort(key=_get_size_score, reverse=True)
         kept_serials.add(female_pets[0]["serial_num"])
         kept_reasons.setdefault(female_pets[0]["serial_num"], []).append(_KEEP_REASON_TEMPLATES["female_best"])
 
@@ -1354,8 +1375,67 @@ def _get_size_score(pet: dict) -> float:
 
 
 def _get_excellent_stats(pet: dict) -> list:
-    """Return stat keys where the pet has a positive talent (top 3)."""
-    return [k for k, col in _STAT_COLS.items() if pet.get(col, 0) > 0][:3]
+    """天赋大于 0 的属性里，取得分最高的三项。"""
+    ranked = sorted(
+        _STAT_COLS,
+        key=lambda key: (-(pet.get(_STAT_COLS[key], 0) or 0), key),
+    )
+    return [key for key in ranked if (pet.get(_STAT_COLS[key], 0) or 0) > 0][:3]
+
+
+def _json_set(raw) -> set:
+    if isinstance(raw, set):
+        return raw
+    if not raw:
+        return set()
+    try:
+        data = json.loads(raw) if isinstance(raw, str) else raw
+    except (json.JSONDecodeError, TypeError):
+        return set()
+    if not isinstance(data, list):
+        return set()
+    return set(data)
+
+
+def _same_evolution_family(mother_evo, target_evo) -> bool:
+    if not mother_evo or not target_evo:
+        return False
+    return bool(mother_evo & target_evo)
+
+
+def score_breeding_pair(
+    mother: dict,
+    father: dict,
+    desired_stats: list,
+    desired_nature_id: int | None,
+    natures_count: int,
+    use_king_ball: bool,
+    king_ball_attr: str | None,
+    breed_big_size: bool,
+) -> dict | None:
+    """和推荐接口同一套打分。性别未知、自己配自己、蛋组或进化链对不上时返回 None。"""
+    if mother.get("serial_num") == father.get("serial_num"):
+        return None
+    if mother.get("gender") != 2 or father.get("gender") != 1:
+        return None
+    m_eggs = _json_set(mother.get("egg_groups"))
+    f_eggs = _json_set(father.get("egg_groups"))
+    if not m_eggs or not f_eggs or not m_eggs.intersection(f_eggs):
+        return None
+    calc = BreedCalculator(
+        _get_excellent_stats(father),
+        _get_excellent_stats(mother),
+        king_ball_attr if use_king_ball else None,
+    )
+    stats = [item for item in (desired_stats or []) if item]
+    attr_prob = calc.get_target_prob(stats)
+    nature_prob = 1.0
+    if desired_nature_id:
+        nature_prob = _calc_nature_prob(mother, father, desired_nature_id, natures_count)
+    size_score = 0.0
+    if breed_big_size:
+        size_score = (_get_size_score(mother) + _get_size_score(father)) / 2
+    return _build_pair(mother, father, attr_prob * nature_prob, size_score)
 
 
 def _calc_nature_prob(mother: dict, father: dict, desired_nature_id: int, natures_count: int) -> float:
@@ -1388,88 +1468,71 @@ def _build_pair(mother: dict, father: dict, total_prob: float, size_score: float
 @app.post("/api/recommend_parents")
 def recommend_parents(
     target_base_id: int = Body(...),
-    desired_nature_id: Optional[int] = Body(None),
-    desired_stats: List[str] = Body([]),
+    desired_nature_id: int | None = Body(None),
+    desired_stats: list[str] = Body([]),
     use_king_ball: bool = Body(False),
-    king_ball_attr: Optional[str] = Body(None),
+    king_ball_attr: str | None = Body(None),
     breed_big_size: bool = Body(False)
 ):
     conn = get_db_connection()
-    cursor = conn.cursor()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM pet_natures")
+        natures_count = cursor.fetchone()[0] or 30
 
-    cursor.execute("SELECT COUNT(*) FROM pet_natures")
-    natures_count = cursor.fetchone()[0] or 30
+        cursor.execute("SELECT * FROM pet_base_info WHERE objId = ?", (target_base_id,))
+        target = cursor.fetchone()
+        if not target or target["evolutionStage"] != 1:
+            raise HTTPException(status_code=400, detail="Target must be base form (stage 1)")
+        target_evo_ids = _json_set(target["evolutionId"])
 
-    # 1. 校验目标精灵
-    cursor.execute("SELECT * FROM pet_base_info WHERE objId = ?", (target_base_id,))
-    target = cursor.fetchone()
-    if not target or target["evolutionStage"] != 1:
-        raise HTTPException(status_code=400, detail="Target must be base form (stage 1)")
+        cursor.execute("""
+            SELECT i.*, b.familyId, b.egg_groups, b.evolutionId, b.name as base_name,
+                   b.height_low as base_height_low, b.height_high as base_height_high,
+                   b.weight_low as base_weight_low, b.weight_high as base_weight_high,
+                   n.name as nature_name, n.plus_stat as nature_plus, n.minus_stat as nature_minus
+            FROM pet_instances i
+            JOIN pet_base_info b ON i.base_id = b.objId
+            LEFT JOIN pet_natures n ON i.nature = n.id
+            WHERE i.is_active = 1 AND i.gender = 2
+        """)
+        qualified_mothers = []
+        for row in cursor.fetchall():
+            mother = dict(row)
+            if _same_evolution_family(_json_set(mother["evolutionId"]), target_evo_ids):
+                qualified_mothers.append(mother)
 
-    target_evo_ids = set(json.loads(target["evolutionId"]) if target["evolutionId"] else [])
+        cursor.execute("""
+            SELECT i.*, b.familyId, b.egg_groups, b.evolutionId, b.name as base_name,
+                   b.height_low as base_height_low, b.height_high as base_height_high,
+                   b.weight_low as base_weight_low, b.weight_high as base_weight_high,
+                   n.name as nature_name, n.plus_stat as nature_plus, n.minus_stat as nature_minus
+            FROM pet_instances i
+            JOIN pet_base_info b ON i.base_id = b.objId
+            LEFT JOIN pet_natures n ON i.nature = n.id
+            WHERE i.is_active = 1 AND i.gender = 1
+        """)
+        fathers = [dict(row) for row in cursor.fetchall()]
 
-    # 2. 查询所有合格母方（进化链包含目标精灵）
-    cursor.execute("""
-        SELECT i.*, b.familyId, b.egg_groups, b.evolutionId, b.name as base_name,
-               b.height_low as base_height_low, b.height_high as base_height_high,
-               b.weight_low as base_weight_low, b.weight_high as base_weight_high,
-               n.name as nature_name, n.plus_stat as nature_plus, n.minus_stat as nature_minus
-        FROM pet_instances i
-        JOIN pet_base_info b ON i.base_id = b.objId
-        LEFT JOIN pet_natures n ON i.nature = n.id
-        WHERE i.is_active = 1 AND i.gender != 1
-    """)
-    qualified_mothers = []
-    for row in cursor.fetchall():
-        d = dict(row)
-        evo_ids = set(json.loads(d["evolutionId"]) if d["evolutionId"] else [])
-        if evo_ids.issubset(target_evo_ids):
-            qualified_mothers.append(d)
-
-    # 3. 查询所有合格父方
-    cursor.execute("""
-        SELECT i.*, b.familyId, b.egg_groups, b.name as base_name,
-               b.height_low as base_height_low, b.height_high as base_height_high,
-               b.weight_low as base_weight_low, b.weight_high as base_weight_high,
-               n.name as nature_name, n.plus_stat as nature_plus, n.minus_stat as nature_minus
-        FROM pet_instances i
-        JOIN pet_base_info b ON i.base_id = b.objId
-        LEFT JOIN pet_natures n ON i.nature = n.id
-        WHERE i.is_active = 1 AND i.gender != 2
-    """)
-    all_males = [dict(row) for row in cursor.fetchall()]
-
-    # 4. 配对打分
-    recommendations = []
-    for mother in qualified_mothers:
-        m_eggs = set(json.loads(mother["egg_groups"]) if mother["egg_groups"] else [])
-        m_excellent = _get_excellent_stats(mother)
-
-        for father in all_males:
-            f_eggs = set(json.loads(father["egg_groups"]) if father["egg_groups"] else [])
-            if not m_eggs.intersection(f_eggs):
-                continue
-
-            f_excellent = _get_excellent_stats(father)
-
-            calc = BreedCalculator(f_excellent, m_excellent, king_ball_attr if use_king_ball else None)
-            attr_prob = calc.get_target_prob(desired_stats)
-
-            nature_prob = 1.0
-            if desired_nature_id:
-                nature_prob = _calc_nature_prob(mother, father, desired_nature_id, natures_count)
-
-            total_prob = attr_prob * nature_prob
-
-            size_score = 0
-            if breed_big_size:
-                size_score = (_get_size_score(mother) + _get_size_score(father)) / 2
-
-            recommendations.append(_build_pair(mother, father, total_prob, size_score))
-
-    recommendations.sort(key=lambda x: x["score"], reverse=True)
-    conn.close()
-    return recommendations[:10]
+        recommendations = []
+        for mother in qualified_mothers:
+            for father in fathers:
+                pair = score_breeding_pair(
+                    mother,
+                    father,
+                    desired_stats,
+                    desired_nature_id,
+                    natures_count,
+                    use_king_ball,
+                    king_ball_attr,
+                    breed_big_size,
+                )
+                if pair:
+                    recommendations.append(pair)
+        recommendations.sort(key=lambda item: item["score"], reverse=True)
+        return recommendations[:10]
+    finally:
+        conn.close()
 
 
 # ---- 家园生蛋配置（5组配对） ----
@@ -1547,7 +1610,7 @@ def get_breeding_slots():
 
 
 @app.put("/api/breeding_slots")
-def update_breeding_slots(slots: List[dict] = Body(...)):
+def update_breeding_slots(slots: list[dict] = Body(...)):
     """批量更新繁育槽位（5组）。Body: [{slot_id, target_base_id, father_serial, mother_serial}]"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -1762,65 +1825,76 @@ def check_breeding_slots():
         ORDER BY s.slot_id
     """)
     slots = [dict(r) for r in cursor.fetchall()]
+    occupied = {}
+    for slot in slots:
+        for key in ("father_serial", "mother_serial"):
+            if slot[key]:
+                occupied[int(slot[key])] = slot["slot_id"]
 
     results = []
     for slot in slots:
-        target_evo_ids = set(json.loads(slot["evolutionId"]) if slot["evolutionId"] else [])
+        target_evo_ids = _json_set(slot["evolutionId"])
         slot_id = slot["slot_id"]
         current_father = slot["father_serial"]
         current_mother = slot["mother_serial"]
+        blocked = {serial for serial, owner in occupied.items() if owner != slot_id}
+        talents = slot.get("talents")
+        desired_stats = list(_json_set(talents)) if not isinstance(talents, list) else talents
+        if isinstance(talents, list):
+            desired_stats = talents
 
-        # 查询母方候选（决定种族）
         cursor.execute("""
             SELECT i.*, b.familyId, b.egg_groups, b.evolutionId, b.name as base_name,
+                   b.height_low as base_height_low, b.height_high as base_height_high,
+                   b.weight_low as base_weight_low, b.weight_high as base_weight_high,
                    n.name as nature_name, n.plus_stat as nature_plus, n.minus_stat as nature_minus
             FROM pet_instances i
             JOIN pet_base_info b ON i.base_id = b.objId
             LEFT JOIN pet_natures n ON i.nature = n.id
-            WHERE i.is_active = 1 AND i.gender != 1
+            WHERE i.is_active = 1 AND i.gender = 2
         """)
         mothers = []
         for row in cursor.fetchall():
-            d = dict(row)
-            evo_ids = set(json.loads(d["evolutionId"]) if d["evolutionId"] else [])
-            if evo_ids.issubset(target_evo_ids):
-                mothers.append(d)
+            mother = dict(row)
+            if mother["serial_num"] in blocked:
+                continue
+            if _same_evolution_family(_json_set(mother["evolutionId"]), target_evo_ids):
+                mothers.append(mother)
 
-        # 父方候选
         cursor.execute("""
             SELECT i.*, b.familyId, b.egg_groups, b.evolutionId, b.name as base_name,
+                   b.height_low as base_height_low, b.height_high as base_height_high,
+                   b.weight_low as base_weight_low, b.weight_high as base_weight_high,
                    n.name as nature_name, n.plus_stat as nature_plus, n.minus_stat as nature_minus
             FROM pet_instances i
             JOIN pet_base_info b ON i.base_id = b.objId
             LEFT JOIN pet_natures n ON i.nature = n.id
-            WHERE i.is_active = 1 AND i.gender != 2
+            WHERE i.is_active = 1 AND i.gender = 1
         """)
-        fathers = [dict(row) for row in cursor.fetchall()]
+        fathers = [dict(row) for row in cursor.fetchall() if dict(row)["serial_num"] not in blocked]
 
-        # 打分，找到最优
         best_pair = None
         best_score = -1
         for mother in mothers:
-            m_eggs = set(json.loads(mother["egg_groups"]) if mother["egg_groups"] else [])
-            m_excellent = _get_excellent_stats(mother)
             for father in fathers:
-                f_eggs = set(json.loads(father["egg_groups"]) if father["egg_groups"] else [])
-                if not m_eggs.intersection(f_eggs):
-                    continue
-                f_excellent = _get_excellent_stats(father)
-                calc = BreedCalculator(f_excellent, m_excellent, None)
-                attr_prob = calc.get_target_prob([])
-                total_prob = attr_prob * 1.0
-                size_score = _get_size_score(mother) + _get_size_score(father) / 2
-                score = round(total_prob * 100 + size_score * 50, 2)
-                if score > best_score:
-                    best_score = score
+                pair = score_breeding_pair(
+                    mother,
+                    father,
+                    desired_stats,
+                    slot.get("nature_id") or None,
+                    natures_count,
+                    bool(slot.get("use_king_ball")),
+                    slot.get("king_ball_attr"),
+                    bool(slot.get("breed_big_size")),
+                )
+                if pair and pair["score"] > best_score:
+                    best_score = pair["score"]
                     best_pair = {
                         "father_serial": father["serial_num"],
                         "father_name": father["base_name"],
                         "mother_serial": mother["serial_num"],
                         "mother_name": mother["base_name"],
-                        "score": score,
+                        "score": pair["score"],
                     }
 
         changed = not (
@@ -1851,66 +1925,33 @@ def check_breeding_slots():
 @app.post("/api/sync")
 def sync_pets():
     """Stream pet sync progress via SSE."""
-    if not _begin_sync("API 同步精灵"):
-        raise HTTPException(status_code=409, detail="同步任务正在运行中")
 
-    def event_stream():
-        progress_queue = queue.Queue()
-
+    def worker(progress_queue: queue.Queue):
         def progress_callback(message, current=0, total=0):
-            progress_queue.put({
-                "message": message,
-                "current": current,
-                "total": total
-            })
+            progress_queue.put({"message": message, "current": current, "total": total})
 
-        def run_sync_task():
-            try:
-                from scripts.fetcher import run_sync
-                result = run_sync(progress_callback=progress_callback)
-                if result.get("aborted"):
-                    message = result.get("error") or "同步中止"
-                    _sync_logger.error(message)
-                    progress_queue.put({"done": True, "error": message})
-                else:
-                    progress_queue.put({"done": True, "result": result})
-                    _sync_logger.info(
-                        "同步完成：新增 %s 只，更新 %s 只，共 %s 只，标记放生 %s 只",
-                        result.get("new", 0),
-                        result.get("updated", 0),
-                        result.get("total", 0),
-                        result.get("released", 0),
-                    )
-                    fail_count = result.get("fail_count", 0)
-                    if fail_count:
-                        for detail in result.get("fail_details", []):
-                            _sync_logger.warning(f"  同步失败 -> {detail}")
-            except Exception as e:
-                _sync_logger.error(f"同步失败: {e}")
-                progress_queue.put({"done": True, "error": str(e)})
-            finally:
-                _end_sync()
+        from scripts.fetcher import run_sync
+        result = run_sync(progress_callback=progress_callback)
+        if result.get("aborted"):
+            message = result.get("error") or "同步中止"
+            _sync_logger.error(message)
+            progress_queue.put({"done": True, "error": message})
+            return
+        progress_queue.put({"done": True, "result": result})
+        _sync_logger.info(
+            "同步完成：新增 %s 只，更新 %s 只，共 %s 只，标记放生 %s 只",
+            result.get("new", 0),
+            result.get("updated", 0),
+            result.get("total", 0),
+            result.get("released", 0),
+        )
+        for detail in result.get("fail_details", []):
+            _sync_logger.warning("  同步失败 -> %s", detail)
 
-        thread = threading.Thread(target=run_sync_task, daemon=True)
-        thread.start()
-
-        while True:
-            try:
-                msg = progress_queue.get(timeout=60)
-            except queue.Empty:
-                yield f"data: {json.dumps({'message': '心跳...', 'current': 0, 'total': 0})}\n\n"
-                continue
-
-            if msg.get("done"):
-                if msg.get("error"):
-                    yield f"data: {json.dumps({'error': msg['error']})}\n\n"
-                else:
-                    yield f"data: {json.dumps({'done': True, 'result': msg.get('result', {})})}\n\n"
-                break
-            else:
-                yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    progress_queue = _run_locked("API 同步精灵", worker)
+    if progress_queue is None:
+        raise HTTPException(status_code=409, detail="同步任务正在运行中")
+    return _sse(progress_queue)
 
 
 @app.get("/api/sync_status")
@@ -1936,7 +1977,7 @@ _overlay_proc = None
 
 
 @app.post("/api/overlay")
-def open_box_overlay(payload: Optional[dict] = Body(default=None)):
+def open_box_overlay(payload: dict | None = Body(default=None)):
     """打开置顶半透明的盒子对照窗。"""
     global _overlay_proc
     import subprocess
@@ -1957,8 +1998,8 @@ def open_box_overlay(payload: Optional[dict] = Body(default=None)):
 def get_release_recommendations(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=5000),
-    min_score: Optional[float] = Query(None),
-    species_id: Optional[int] = Query(None)
+    min_score: float | None = Query(None),
+    species_id: int | None = Query(None)
 ):
     """
     获取放生推荐列表。
@@ -2244,64 +2285,30 @@ def release_click_run():
     if count == 0:
         raise HTTPException(status_code=400, detail="没有可点击的放生目标，或还没有盒子位置")
 
-    def event_stream():
-        progress_queue = queue.Queue()
-
+    def worker(progress_queue: queue.Queue):
         def progress_callback(message, current=0, total=0):
             progress_queue.put({"message": message, "current": current, "total": total})
 
-        def run_task():
-            try:
-                result = run_release(groups, progress=progress_callback)
-                progress_queue.put({"done": True, "result": result})
-            except Exception as exc:
-                progress_queue.put({"done": True, "error": str(exc)})
+        result = run_release(groups, progress=progress_callback)
+        progress_queue.put({"done": True, "result": result})
 
-        threading.Thread(target=run_task, daemon=True).start()
-        while True:
-            try:
-                msg = progress_queue.get(timeout=60)
-            except queue.Empty:
-                yield f"data: {json.dumps({'message': '心跳...', 'current': 0, 'total': 0})}\n\n"
-                continue
-            if msg.get("done"):
-                if msg.get("error"):
-                    yield f"data: {json.dumps({'error': msg['error']}, ensure_ascii=False)}\n\n"
-                else:
-                    yield f"data: {json.dumps({'done': True, 'result': msg.get('result', {})}, ensure_ascii=False)}\n\n"
-                break
-            yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    progress_queue = _run_locked("点击放生", worker)
+    if progress_queue is None:
+        raise HTTPException(status_code=409, detail="同步任务正在运行中")
+    return _sse(progress_queue)
 
 
 @app.get("/api/release_summary")
 def get_release_summary():
-    """获取放生推荐摘要（首页概览用）"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT COUNT(*) FROM pet_instances WHERE is_active = 1")
-    total_active = cursor.fetchone()[0] or 0
-
-    cursor.execute("""
-        SELECT i.serial_num, i.talent_skill, i.talent_rank, i.mutation
-        FROM pet_instances i
-        WHERE i.is_active = 1
-    """)
-    all_pets = cursor.fetchall()
-    conn.close()
-
-    rough_recommended = sum(
-        1 for p in all_pets
-        if p["talent_skill"] == 0 and p["talent_rank"] == 1 and p["mutation"] not in MUTATION_KEEP
-    )
-
-    total_active = max(total_active, 1)
+    """首页摘要，和放生推荐用同一套保留规则。"""
+    data = get_release_recommendations(page=1, page_size=1)
+    total_active = data["summary"]["total_active_pets"] or 0
+    recommended = data["total"] or 0
+    base = max(total_active, 1)
     return {
         "total_active": total_active,
-        "recommended_release": rough_recommended,
-        "releaseable_percent": round(rough_recommended / total_active * 100, 1),
+        "recommended_release": recommended,
+        "releaseable_percent": round(recommended / base * 100, 1),
     }
 
 
@@ -2323,7 +2330,7 @@ def get_species_preferences():
             {
                 "base_id": r["base_id"],
                 "species_name": r["species_name"],
-                "preferred_nature_ids": json.loads((dict(r).get("preferred_nature_ids", "[]") or "[]")),
+                "preferred_nature_ids": json.loads(dict(r).get("preferred_nature_ids", "[]") or "[]"),
                 "keep_count": r["keep_count"],
                 "updated_at": r["updated_at"],
             }
@@ -2463,7 +2470,7 @@ def api_stop_packets():
 
 
 @app.post("/api/packets/record")
-def api_record_packets(payload: Optional[dict] = Body(default=None)):
+def api_record_packets(payload: dict | None = Body(default=None)):
     """改道记录游戏消息。抓到精灵列表时写入仓库。也可回放 pcap。"""
     from scripts.packet_store import record_divert, record_live
 
@@ -2473,64 +2480,43 @@ def api_record_packets(payload: Optional[dict] = Body(default=None)):
         raise HTTPException(status_code=400, detail="mode 只能是 divert 或 pcap")
     iface = str(payload.get("iface") or "")
     path = str(payload.get("path") or "")
+    if mode == "pcap":
+        from scripts.packet_store import allowed_pcap
+
+        try:
+            path = str(allowed_pcap(path))
+        except (ValueError, FileNotFoundError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     label = f"抓包记录 mode={mode}"
     if mode != "divert":
         label += f" path={path or '未指定'}"
-    if not _begin_sync(label):
-        raise HTTPException(status_code=409, detail="同步任务正在运行中")
 
-    def event_stream():
-        progress_queue = queue.Queue()
-
+    def worker(progress_queue: queue.Queue):
         def progress_callback(message, current=0, total=0):
             progress_queue.put({"message": message, "current": current, "total": total})
 
-        def run_task():
-            try:
-                if mode == "divert":
-                    result = record_divert(progress=progress_callback)
-                else:
-                    result = record_live(
-                        mode,
-                        iface=iface,
-                        pcap=path,
-                        progress=progress_callback,
-                    )
-                progress_queue.put({"done": True, "result": result})
-                _sync_logger.info(
-                    "抓包记录完成：saved=%s no_key=%s bad_key=%s %s",
-                    result.get("saved", 0),
-                    result.get("no_key", 0),
-                    result.get("bad_key", 0),
-                    result.get("summary", ""),
-                )
-            except Exception as exc:
-                _sync_logger.error("抓包记录失败: %s", exc)
-                progress_queue.put({"done": True, "error": str(exc)})
-            finally:
-                _end_sync()
+        if mode == "divert":
+            result = record_divert(progress=progress_callback)
+        else:
+            result = record_live(mode, iface=iface, pcap=path, progress=progress_callback)
+        progress_queue.put({"done": True, "result": result})
+        _sync_logger.info(
+            "抓包记录完成：saved=%s no_key=%s bad_key=%s %s",
+            result.get("saved", 0),
+            result.get("no_key", 0),
+            result.get("bad_key", 0),
+            result.get("summary", ""),
+        )
 
-        threading.Thread(target=run_task, daemon=True).start()
-        while True:
-            try:
-                msg = progress_queue.get(timeout=60)
-            except queue.Empty:
-                yield f"data: {json.dumps({'message': '心跳...', 'current': 0, 'total': 0}, ensure_ascii=False)}\n\n"
-                continue
-            if msg.get("done"):
-                if msg.get("error"):
-                    yield f"data: {json.dumps({'error': msg['error']}, ensure_ascii=False)}\n\n"
-                else:
-                    yield f"data: {json.dumps({'done': True, 'result': msg.get('result', {})}, ensure_ascii=False)}\n\n"
-                break
-            yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    progress_queue = _run_locked(label, worker)
+    if progress_queue is None:
+        raise HTTPException(status_code=409, detail="同步任务正在运行中")
+    return _sse(progress_queue)
 
 
-# 挂载前端静态文件
-app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
+_FRONTEND_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend"))
+app.mount("/", StaticFiles(directory=_FRONTEND_DIR, html=True), name="frontend")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8000)
