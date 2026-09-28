@@ -115,6 +115,31 @@ class CaptureSyncTests(unittest.TestCase):
         released = upsert_pets([pet_record(sample_pet())], db_path=self.db_path, mark_missing=True)
         self.assertEqual(released["released"], 1)
 
+    def test_full_list_keeps_world_team_pets(self):
+        import sqlite3
+
+        upsert_pets(
+            [
+                pet_record(sample_pet(gid=7, name="旧")),
+                pet_record(sample_pet(gid=8, name="队")),
+            ],
+            db_path=self.db_path,
+            mark_missing=False,
+        )
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("ALTER TABLE pet_instances ADD COLUMN world_team INTEGER")
+        conn.execute("UPDATE pet_instances SET world_team = 1 WHERE serial_num = 8")
+        conn.commit()
+        conn.close()
+        released = upsert_pets([pet_record(sample_pet())], db_path=self.db_path, mark_missing=True)
+        self.assertEqual(released["released"], 1)
+        conn = sqlite3.connect(self.db_path)
+        active = dict(conn.execute("SELECT serial_num, is_active FROM pet_instances"))
+        conn.close()
+        self.assertEqual(active[7], 0)
+        self.assertEqual(active[8], 1)
+        self.assertEqual(active[42], 1)
+
     def test_version_change_drops_previous_pages(self):
         collector = PetPageCollector()
         collector.add_decoded({"version": 1, "total_page": 2, "req_page": 1, "pet_info": {"pet_data": [sample_pet(gid=1)]}})

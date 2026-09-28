@@ -114,11 +114,14 @@
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `page` | int | 否 | 页码，默认 1 |
-| `pageSize` | int | 否 | 每页条数，1~100，默认 20 |
+| `page` | int | 否 | 页码，默认 1。`sort=box` 时一页一个盒子 |
+| `pageSize` | int | 否 | 每页条数，1~100，默认 20。盒子排序不用这个参数 |
 | `name` | string | 否 | 搜索名称 |
 | `base_id` | int | 否 | 按种类筛选 |
 | `include_inactive` | bool | 否 | 是否包含已放生 |
+| `sort` | string | 否 | `box`（默认）、`time_desc`、`time_asc`、`base_id` |
+| `hide_mutation` | bool | 否 | 隐藏异色/炫彩/异色炫彩（1、8、9）。污染仍显示 |
+| `hide_world_team` | bool | 否 | 默认 true，不显示大世界队伍 |
 
 **返回**: `{ total, page, pageSize, data[] }`
 
@@ -169,7 +172,7 @@
 ### `GET /api/sync_status` — 同步冷却状态
 
 ```json
-{ "cooldown_active": true, "can_sync": false, "remaining_seconds": 3600 }
+{ "cooldown_active": false, "can_sync": true }
 ```
 
 ### `GET /api/refresh_time` — 宠物刷新时间
@@ -180,7 +183,34 @@
 
 ---
 
-## 三、配置映射文件
+## 三、仓库、放生、抓包接口
+
+| 端点 | 方法 | 用途 |
+|------|------|------|
+| `/api/pets/{serial_num}` | GET | 单只精灵 |
+| `/api/pets/{serial_num}/sync` | POST | 拉这一只的详情 |
+| `/api/world_teams` | GET | 三支大世界队伍 |
+| `/api/match_gender_by_stats` | POST | 六维唯一匹配且性别未知时写入性别 |
+| `/api/sync_gender_export` | POST | 从导出补性别 |
+| `/api/breeding_slots` | GET、PUT | 繁育槽 |
+| `/api/release_recommendations` | GET | 放生建议，按进化家族分组 |
+| `/api/release_summary` | GET | 放生数量摘要 |
+| `/api/species_preferences` | GET、PUT | 每个种类的保留数量和偏好性格 |
+| `/api/overlay` | POST | 打开当前盒子的置顶对照窗 |
+| `/api/release_click/preview` | GET | 即将点击的格子 |
+| `/api/release_click/calibrate` | POST | 开始校准游戏窗口 |
+| `/api/release_click/run` | POST | 在游戏窗口里点击，SSE 进度 |
+| `/api/release_click/stop` | POST | 停止点击 |
+| `/api/packets` | GET、DELETE | 解密后的消息列表；DELETE 清空 |
+| `/api/packets/record` | POST | `{ "mode": "divert" }`，开始改道记录 |
+| `/api/packets/stop` | POST | 停止记录 |
+| `/api/packets/{id}` | GET | 单条消息 |
+| `/api/packets/{id}/parse` | POST | 解析 |
+| `/api/packets/{id}/apply` | POST | 把这条精灵列表写入仓库 |
+
+放生规则见 [`放生推荐算法.md`](放生推荐算法.md)。点击放生不向游戏连接发送放生请求。
+
+## 四、配置映射文件
 
 | 文件 | 路径 | 内容 |
 |------|------|------|

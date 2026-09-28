@@ -7,31 +7,20 @@
 ## 整体架构图
 
 ```
-┌──────────┐   HTTP/SSE    ┌───────────┐   Game API    ┌──────────────┐
-│  前端     │ ◄──────────► │  后端      │ ◄──────────► │  游戏服务器   │
-│ (静态页面) │              │ (FastAPI)  │              │ (腾讯网关)    │
-│           │              │            │              │              │
-│ index.html│   /api/pets  │ main.py    │ gate-way/    │ morefun.game │
-│ breeding  │   /api/sync  │ (488行)    │ /api/pet/    │ .qq.com      │
-│ .html     │   /api/conf  │            │              │              │
-│           │              │            │              │              │
-│ app.js    │              │  ┌──────┐  │              │              │
-│ breeding  │              │  │ SQLite│  │              │              │
-│ .js       │              │  │ware‑  │  │              │              │
-│           │              │  │house  │  │              │              │
-│ style.css │              │  │ .db   │  │              │              │
-└──────────┘              │  └──────┘  │              └──────────────┘
-                           └───────────┘
-                                   │
-                                   │ 读取 (只读)
-                                   ▼
-                           ┌───────────────┐
-                           │ 游戏配置子模块  │
-                           │ (Git submodule) │
-                           │ roco_kingdom    │
-                           │ _world_conf/    │
-                           │ 698 个 JSON    │
-                           └───────────────┘
+浏览器  仓库 / 繁育 / 放生 / 抓包
+   │  HTTP、SSE
+   ▼
+backend/main.py
+   │
+   ├── warehouse.db          精灵、盒子、大世界队伍
+   ├── roco_kingdom_world_conf/   只读游戏配置
+   │
+   ├── 同步精灵  scripts/fetcher.py ──► 游戏 HTTP 接口（需要 .env）
+   │
+   └── 改道记录  scripts/game_relay.py
+                 本机观察 NRC 的 TCP 8195，原样转发
+                 解密后写入 captures/packets.db
+                 精灵列表、登录盒子、换盒、进化、孵蛋、捕捉写入 warehouse.db
 ```
 
 ---
@@ -40,46 +29,29 @@
 
 ```
 roco-kingdom-world-pet-warehouse/
-├── backend/
-│   └── main.py              # FastAPI 单文件后端 (~500行)
-│
+├── backend/main.py            # FastAPI 接口
 ├── frontend/
-│   ├── index.html            # 宠物仓库主页
-│   ├── breeding.html         # 繁育中心页面
-│   ├── app.js                # 仓库页面逻辑
-│   ├── breeding.js           # 繁育页面逻辑
-│   └── style.css             # 全局样式
-│
+│   ├── index.html             # 仓库
+│   ├── breeding.html          # 繁育
+│   ├── release.html           # 放生推荐
+│   ├── packets.html           # 抓包记录
+│   └── style.css
 ├── scripts/
-│   ├── fetcher.py            # 数据同步脚本（游戏API→SQLite）
-│   ├── api_client.py         # 游戏网关 HTTP 客户端
-│   └── sync_conf.sh          # 更新子模块的脚本
-│
-├── docs/
-│   ├── api_documentation.md  # API 文档
-│   ├── pet_fields.md         # 精灵属性字段说明
-│   ├── breed_logic.md        # 繁育算法文档
-│   ├── architecture.md       # 本文档
-│   ├── index.md              # 文档索引
-│   ├── egg.json              # 蛋组配置参考
-│   ├── pet_detail_32088.json # API 响应示例
-│   └── img/                  # 截图
-│
-├── roco_kingdom_world_conf/  # Git 子模块（游戏原始配置）
-│   ├── PETBASE_CONF.json     # 精灵基础配置
-│   ├── PET_BLOOD_CONF.json   # 血脉配置
-│   ├── TYPE_DICTIONARY.json  # 系别字典
-│   ├── MEDAL_CONF.json       # 奖牌配置
-│   ├── SKILL_CONF.json       # 技能配置
-│   ├── PET_EGG_CONF.json     # 蛋组配置
-│   └── ... (698 个 JSON)
-│
-├── warehouse.db              # SQLite 数据库（运行生成，已 gitignore）
-├── .env                      # 认证令牌（已 gitignore）
-├── .env.example              # 环境变量模板
-├── pyproject.toml            # 项目配置
-├── uv.lock                   # 依赖锁定
-└── REASONIX.md               # Reasonix 知识库
+│   ├── fetcher.py             # HTTP 同步
+│   ├── api_client.py
+│   ├── game_relay.py          # 8195 改道与解密
+│   ├── capture_sync.py        # 精灵列表和会话内更新
+│   ├── packet_store.py        # captures/packets.db
+│   ├── pet_boxes.py           # 盒子位置、放生、赠送
+│   ├── world_teams.py
+│   ├── game_release_click.py  # 只点击本机游戏窗口
+│   └── box_overlay.py         # 置顶对照窗
+├── docs/                      # 字段、算法、接口
+├── roco_kingdom_world_conf/   # 游戏配置子模块
+├── warehouse.db               # 运行生成，已 gitignore
+├── .env.example
+├── pyproject.toml
+└── uv.lock
 ```
 
 ---
@@ -88,16 +60,34 @@ roco-kingdom-world-pet-warehouse/
 
 ### 同步流程 (Sync)
 
+HTTP 同步和改道抓包最后都调用 `mark_absent_inactive`：名单里没有、且 `world_team` 为空的在库精灵才标成已放生。列表没拿全时两条路都不标。
+
 ```
 fetcher.py
-  1. fetch_user_info()          → 检查登录状态
-  2. fetch_refresh_time()       → 获取宠物下次刷新时间
-  3. /api/pet/list (分页)       → 获取所有精灵 SerialNum
-  4. 补全 pet_base_info         ← PETBASE_CONF.json
-  5. 标记已放生精灵             → UPDATE is_active=0
-  6. /api/pet/detail (逐只)     → 获取完整详情
-  7. INSERT/UPDATE pet_instances
+  1. 检查登录、刷新时间
+  2. /api/pet/list 分页
+  3. 补全 pet_base_info
+  4. 标记已放生（跳过大世界队伍）
+  5. /api/pet/detail 写入 pet_instances
 ```
+
+HTTP 同步不写 `box_id`。盒子来自登录包和游戏内换盒。
+
+### 会话内更新
+
+改道记录在精灵列表之外还处理这些下行：
+
+| 消息 | 作用 |
+|------|------|
+| `0x0102` 登录 | 大世界三队；认全至少 3 个盒子后才刷新这些盒子的格子 |
+| `0x1891` 整理 | 同一套盒子规则 |
+| `0x1888` 换盒 | 只改回包里点名的格子 |
+| `0x01AE` 进化、`0x141E` 换牌 | 用包里的 PetData 更新这一只 |
+| `0x030C` 孵蛋、`0x0243` 奖励、`0x1983` 捕捉 | 写入新精灵；能对上编号时顺便落盒 |
+| `0x132C` 战斗结束 | 只收入手时间就在附近的精灵 |
+| `0x01C5` 放生、`0x1808` 赠送确认 | 标成不在库。带完整精灵数据的赠送包是预览，不改库 |
+
+登录或整理若认不出足够的盒子，原来的格子保持不动。
 
 ### 查询流程 (Query)
 

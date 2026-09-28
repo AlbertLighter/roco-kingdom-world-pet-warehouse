@@ -29,6 +29,24 @@ CONF_DIR = os.path.join(PROJECT_ROOT, "roco_kingdom_world_conf")
 SYNC_WORKERS = int(os.getenv("SYNC_WORKERS", "1"))  # 同步精灵的并发线程数，从 .env 读取，默认串行拉取避免限频
 _sync_logger = logging.getLogger("sync")
 
+def mark_absent_inactive(cursor, present: set[int]) -> int:
+    """完整名单之外的在库精灵标成已放生。大世界队伍不在背包分页里，保持在库。"""
+    try:
+        cursor.execute("ALTER TABLE pet_instances ADD COLUMN world_team INTEGER")
+    except sqlite3.OperationalError:
+        pass
+    cursor.execute(
+        "SELECT serial_num FROM pet_instances WHERE is_active = 1 AND COALESCE(world_team, 0) = 0"
+    )
+    released = 0
+    for (serial_num,) in cursor.fetchall():
+        if serial_num in present:
+            continue
+        cursor.execute("UPDATE pet_instances SET is_active = 0 WHERE serial_num = ?", (serial_num,))
+        released += 1
+    return released
+
+
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -440,22 +458,16 @@ def run_sync(progress_callback=None):
     except Exception as e:
         report(f"⚠ 基础配置同步失败: {e}", 0, 0)
 
-    # 2. Detect and mark released pets
-    cursor.execute("SELECT serial_num FROM pet_instances WHERE is_active = 1")
-    db_active_serials = {row[0] for row in cursor.fetchall()}
-
+    # 2. Detect and mark released pets. 大世界队伍不在这份背包名单里，不能标成已放生。
     released_count = 0
     if list_failed:
         report("列表没有拿全，这次不把缺失的精灵标成已放生", 0, 0)
         _sync_logger.warning("精灵列表不完整（停在第 %s 页），跳过放生标记", current_page)
     else:
-        released_serials = db_active_serials - all_api_serials
-        if released_serials:
-            released_count = len(released_serials)
+        released_count = mark_absent_inactive(cursor, all_api_serials)
+        if released_count:
             report(f"检测到 {released_count} 只已放生精灵，标记中...", 0, 0)
             _sync_logger.info("标记已放生 %s 只", released_count)
-            for sn in released_serials:
-                cursor.execute("UPDATE pet_instances SET is_active = 0 WHERE serial_num = ?", (sn,))
             conn.commit()
 
     # 3. Reactivate/Ensure active for current pets

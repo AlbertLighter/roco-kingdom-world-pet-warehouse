@@ -1,54 +1,47 @@
 # REASONIX.md — Roco Kingdom World Pet Warehouse
 
-Reasonix 会话自动加载的知识库。上限 80 行。
-
 ## 技术栈
 
-- **语言**: Python ≥3.12（`.python-version`, `pyproject.toml`）
-- **框架**: FastAPI（uvicorn ASGI 服务器）
-- **数据库**: SQLite（`warehouse.db`，直接使用 `sqlite3` 模块，无 ORM）
-- **前端**: 原生 JS + HTML5 + CSS3（无框架/打包工具）
-- **核心依赖**: `fastapi`, `uvicorn`, `requests`, `python-dotenv`, `mwclient`
-- **包管理器**: `uv`（仓库包含 `uv.lock`）
+- Python ≥3.12，`uv`，依赖见 `pyproject.toml`
+- FastAPI + SQLite（`warehouse.db`，无 ORM）
+- 前端：`frontend/` 下仓库、繁育、放生、抓包四个原生页面
+- 抓包可选依赖：`uv sync --extra capture`（scapy、pycryptodome、pydivert、psutil、pillow）
 
-## 目录结构
+## 目录
 
 | 路径 | 说明 |
 |------|------|
-| `backend/` | FastAPI 服务端（`main.py` — 488 行单文件 API） |
-| `frontend/` | 静态 Web UI：`index.html`, `breeding.html`, `app.js`, `breeding.js`, `style.css` |
-| `scripts/` | 数据同步工具：`fetcher.py`（同步流水线）, `api_client.py`（HTTP 客户端） |
-| `docs/` | 游戏配置 JSON（`egg.json`, `PETBASE_CONF.json`）、算法文档、图片 |
-| `roco_kingdom_world_conf/` | 698 个游戏数据 JSON 文件（Git 子模块，只读参考数据） |
-| `test_wiki.py` | 独立 Wiki 抓取测试（使用 `mwclient`） |
+| `backend/main.py` | HTTP 接口。从项目根目录启动，静态文件按当前目录找 `frontend/` |
+| `scripts/fetcher.py` | `.env` 令牌同步。不写盒子 |
+| `scripts/game_relay.py` | 本机 8195 改道观察，原样转发 |
+| `scripts/capture_sync.py` | 精灵列表，以及换盒、进化、孵蛋、捕捉 |
+| `scripts/pet_boxes.py` | 盒子快照与单次换位 |
+| `scripts/world_teams.py` | 登录包里的大世界三队 |
+| `scripts/game_release_click.py` | 只点击本机游戏窗口 |
+| `roco_kingdom_world_conf/` | 配置子模块，只读 |
 
-## 常用命令
+## 命令
 
 | 操作 | 命令 |
 |------|------|
-| 同步游戏数据 | `python scripts/fetcher.py` |
-| 启动后端 | `python backend/main.py`（监听 `0.0.0.0:8000`） |
-| 安装依赖 | `uv sync`（或 `pip install -r requirements.txt`） |
-| 初始化子模块（首次 clone） | `git submodule update --init` |
+| 启动 | `uv run python backend/main.py` |
+| 安装 | `uv sync`；抓包再加 `--extra capture` |
+| 测试 | `uv run python -m unittest discover tests` |
+| HTTP 同步 | `uv run python scripts/fetcher.py` |
 | 更新子模块 | `./scripts/sync_conf.sh` |
-| 安装 dev 依赖（lint/typecheck） | `uv sync --group dev` |
-| Lint 检查 | `ruff check .` |
-| 类型检查 | `mypy backend/` |
+
+根目录 `main.py` 不启动服务。Windows 用 `start.bat`（纯 ASCII、CRLF，会申请管理员权限）。
 
 ## 约定
 
-- **注释**: `backend/main.py` 和 `scripts/` 中全部使用中文注释。
-- **密钥**: `.env` 文件存放 `AUTHORIZATION_TOKEN`, `OPENID`, `ACCESS_TOKEN`, `REFRESH_TOKEN`。`.env.example` 作为模板提交到仓库。
-- **CORS**: FastAPI 中间件使用全开配置（`allow_origins=["*"]`）。
-- **提交风格**: 中英文混合的祈使句信息，**不是** Conventional Commits 格式。
-- **前端**: 全局 JS 函数 + DOM 查询，无模块系统。
+- 注释用中文。提交说明用中文，不是 Conventional Commits。
+- `.env` 只放令牌，模板是 `.env.example`。
+- 改抓包、解密或前端后要重启进程。
+- 完整名单才会把缺席精灵标成已放生，并且跳过 `world_team` 非空的精灵。
+- 登录或整理至少认出 3 个可信盒子才改格子；没认出的盒子保持原位。`0x1888` 只改点名的那几只。
 
-## 注意点
+## 数据
 
-- **`warehouse.db`** — 运行时创建的 SQLite 数据库。在 `.gitignore` 中（匹配 `*.db`）。删除即可重置所有同步数据。
-- **`docs/` JSON 文件** — 游戏参考配置，**非**可编辑源码。`egg.json` 映射宠物 ID → 蛋组；`PETBASE_CONF.json` 定义宠物基础属性。
-- **`roco_kingdom_world_conf/`** — Git 子模块，指向 `github.com/mieli1722/roco_kingdom_world_conf.git`。请勿手动编辑。
-  - 首次 clone：`git submodule update --init`
-  - 更新到最新：`./scripts/sync_conf.sh` 或 `git submodule update --remote`
-- **`.env`** — 包含真实认证令牌。**切勿提交。** `.env.example` 是安全模板。
-- **后端为单文件** — `backend/main.py` 约 488 行。后续重构可能会拆分。
+- `warehouse.db`、`captures/`、`logs/` 都在 `.gitignore`。
+- 解密消息在 `captures/packets.db`，会话密钥在 `captures/keys/latest.key`。
+- 服务地址是 http://localhost:8000 。

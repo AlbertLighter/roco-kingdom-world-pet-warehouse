@@ -369,12 +369,19 @@ def record_divert(seconds: int | None = None, progress=None) -> dict:
         _sync_logger.info("抓包 %s", message)
         report(message, current, total)
 
-    from scripts.capture_sync import PET_LIST_OPCODE, PetPageCollector, pet_record, upsert_pets
+    from scripts.capture_sync import (
+        PET_LIST_OPCODE,
+        SESSION_OPCODES,
+        PetPageCollector,
+        apply_captured_event,
+        pet_record,
+        upsert_pets,
+    )
     from scripts.rocom_pet import parse_pet_list
 
     collector = PetPageCollector()
     sync_result = {"new": 0, "updated": 0, "total": 0, "released": 0}
-    marked = {"done": False}
+    pages_done = {"done": False}
 
     def on_frame(direction: str, command: int, opcode: int | None, payload: bytes, note: str) -> None:
         shown = opcode if opcode is not None else command
@@ -384,33 +391,52 @@ def record_divert(seconds: int | None = None, progress=None) -> dict:
             saved["n"] += 1
             if saved["n"] == 1 or saved["n"] % 25 == 0:
                 emit(f"已记录 {saved['n']} 条", saved["n"], 0)
-        if direction == "s2c" and opcode == 0x0102 and payload:
+        if direction != "s2c" or not payload or opcode is None:
+            return
+        if opcode == 0x0102:
             from scripts.pet_boxes import apply_boxes
             from scripts.world_teams import apply_world_teams
 
-            marked = apply_world_teams(payload)
-            if marked.get("updated"):
-                emit(f"已标记大世界队伍 {marked['updated']} 只", saved["n"], 0)
+            teams = apply_world_teams(payload)
+            if teams.get("updated"):
+                emit(f"已标记大世界队伍 {teams['updated']} 只", saved["n"], 0)
             boxes = apply_boxes(payload)
             if boxes.get("updated"):
                 emit(f"已记录盒子位置 {boxes['updated']} 只，{boxes['boxes']} 个盒子", saved["n"], 0)
             return
-        if direction == "s2c" and opcode == 0x01C5 and payload:
+        if opcode == 0x01C5:
             from scripts.pet_boxes import mark_freed
 
             freed = mark_freed(payload)
             if freed:
                 emit(f"监听到放生成功 {freed} 只，已从仓库标出", saved["n"], 0)
-        if direction != "s2c" or opcode != PET_LIST_OPCODE or not payload:
+            return
+        if opcode in SESSION_OPCODES:
+            event = apply_captured_event(opcode, payload)
+            kind = event.get("kind")
+            if kind == "boxes" and event.get("updated"):
+                emit(f"整理后更新盒子位置 {event['updated']} 只", saved["n"], 0)
+            elif kind == "box_moves" and event.get("updated"):
+                emit(f"换位更新 {event['updated']} 只", saved["n"], 0)
+            elif kind == "gift" and event.get("updated"):
+                emit(f"监听到赠送 {event['updated']} 只，已从仓库标出", saved["n"], 0)
+            elif kind == "pets" and (event.get("new") or event.get("updated")):
+                emit(
+                    f"会话内写入精灵：新增 {event.get('new', 0)}，更新 {event.get('updated', 0)}",
+                    saved["n"],
+                    0,
+                )
+            return
+        if opcode != PET_LIST_OPCODE:
             return
         decoded = parse_pet_list(payload)
         added = collector.add_decoded(decoded)
         records = [row for pet in (decoded.get("pet_info") or {}).get("pet_data") or [] if (row := pet_record(pet))]
         if not records:
             return
-        complete = collector.is_complete() and not marked["done"]
+        complete = collector.is_complete() and not pages_done["done"]
         if complete:
-            marked["done"] = True
+            pages_done["done"] = True
             all_records, _done = collector.snapshot()
             result = upsert_pets(all_records, mark_missing=True, progress=emit)
         else:

@@ -11,7 +11,8 @@
 | [`api_documentation.md`](api_documentation.md) | 游戏服务器 API + 项目自建 API 完整参考 |
 | [`pet_fields.md`](pet_fields.md) | 精灵属性字段含义详解（对照游戏页面） |
 | [`breed_logic.md`](breed_logic.md) | 繁育概率计算器核心算法 |
-| [`architecture.md`](architecture.md) | 项目技术架构、数据流、目录结构 |
+| [`architecture.md`](architecture.md) | 项目结构、HTTP 同步和会话内更新 |
+| [`放生推荐算法.md`](放生推荐算法.md) | 进化家族内的保留和放生顺序 |
 
 ## 📁 参考数据
 
@@ -46,8 +47,13 @@
 | `/api/update_gender` | POST | 设置精灵性别 |
 | `/api/recommend_parents` | POST | 繁育父母推荐 |
 | `/api/sync` | POST | 同步精灵数据 (SSE) |
-| `/api/sync_status` | GET | 同步冷却状态 |
+| `/api/sync_status` | GET | 是否可以开始同步 |
 | `/api/refresh_time` | GET | 游戏刷新时间 |
+| `/api/world_teams` | GET | 大世界三队 |
+| `/api/release_recommendations` | GET | 放生建议 |
+| `/api/packets` | GET | 抓包记录 |
+| `/api/packets/record` | POST | 开始改道记录 |
+| `/api/overlay` | POST | 打开盒子对照窗 |
 
 ### 常用命令
 

@@ -6,6 +6,8 @@ total_page=2，req_page=3，pet_info=4，version=6。
 
 from __future__ import annotations
 
+import time
+
 
 def _read_varint(buf: bytes, index: int) -> tuple[int, int]:
     value = 0
@@ -147,6 +149,8 @@ def _pet(blob: bytes) -> dict:
             pet["height"] = value
         elif field_no == 27 and wire == 0:
             pet["weight"] = value
+        elif field_no == 32 and wire == 0:
+            pet["add_time"] = value
         elif field_no == 45 and wire == 0:
             pet["mutation_type"] = value
         elif field_no == 47 and wire == 0:
@@ -186,3 +190,46 @@ def parse_pet_list(body: bytes) -> dict:
                 if sub_no == 1 and sub_wire == 2 and isinstance(sub_val, (bytes, bytearray)):
                     decoded["pet_info"]["pet_data"].append(_pet(bytes(sub_val)))
     return decoded
+
+
+def _has_cjk(text: str) -> bool:
+    return any("\u4e00" <= char <= "\u9fff" for char in text)
+
+
+def _looks_like_pet(pet: dict) -> bool:
+    gid = pet.get("gid") or 0
+    conf_id = pet.get("conf_id") or 0
+    name = pet.get("name") or ""
+    return gid > 0 and conf_id > 1000 and _has_cjk(name)
+
+
+def find_live_pets(body: bytes, *, max_add_age: int | None = None, now: int | None = None) -> list[dict]:
+    """在进化、孵蛋、捕捉回包里找出完整 PetData。战斗结束包还要求入手时间就在附近。"""
+    found: dict[int, dict] = {}
+
+    def consider(blob: bytes) -> None:
+        pet = _pet(blob)
+        if not _looks_like_pet(pet):
+            return
+        if max_add_age is not None:
+            added = pet.get("add_time")
+            if not isinstance(added, int):
+                return
+            current = int(time.time()) if now is None else int(now)
+            if added < current - max_add_age or added > current + 120:
+                return
+        gid = int(pet["gid"])
+        previous = found.get(gid)
+        if previous is None or len(pet) > len(previous):
+            found[gid] = pet
+
+    def visit(blob: bytes, depth: int) -> None:
+        if depth > 8 or not blob:
+            return
+        consider(blob)
+        for _field_no, wire, value in scan_fields(blob):
+            if wire == 2 and isinstance(value, (bytes, bytearray)) and len(value) > 8:
+                visit(bytes(value), depth + 1)
+
+    visit(body, 0)
+    return list(found.values())

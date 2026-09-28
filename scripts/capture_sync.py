@@ -331,13 +331,7 @@ def upsert_pets(records: list[dict], *, db_path: str | None = None, mark_missing
     released = 0
     if mark_missing:
         captured = {row["serial_num"] for row in records}
-        cursor.execute(
-            "SELECT serial_num FROM pet_instances WHERE is_active = 1 AND COALESCE(world_team, 0) = 0"
-        )
-        for (serial_num,) in cursor.fetchall():
-            if serial_num not in captured:
-                cursor.execute("UPDATE pet_instances SET is_active = 0 WHERE serial_num = ?", (serial_num,))
-                released += 1
+        released = fetcher.mark_absent_inactive(cursor, captured)
         if released:
             report(f"标记 {released} 只不在本次列表中的精灵为已放生", total, total)
     conn.commit()
@@ -372,6 +366,52 @@ def sync_from_export(filepath: str | None = None, progress=None, db_path: str | 
     result["source"] = files[0].name if len(files) == 1 else f"{len(files)} 个文件"
     return result
 
+
+
+SESSION_OPCODES = {
+    0x1888,  # 换盒
+    0x1891,  # 整理后的盒子快照
+    0x01AE,  # 进化
+    0x030C,  # 孵蛋
+    0x0243,  # 奖励，含战斗内捕捉
+    0x1983,  # 战斗外捕捉
+    0x132C,  # 战斗结束，只收刚入手的
+    0x141E,  # 换牌后的精灵数据
+    0x1808,  # 赠送
+}
+_RECENT_PET_OPCODES = {0x132C}
+_BOX_WITH_NEW_PET = {0x030C, 0x0243, 0x1983, 0x132C}
+
+
+def apply_captured_event(opcode: int, payload: bytes, *, db_path: str | None = None) -> dict:
+    """登录之后的单条下行。只更新这条消息里的精灵或格子，不把缺席的标成已放生。"""
+    from scripts.pet_boxes import apply_box_moves, apply_boxes, mark_gifted
+    from scripts.rocom_pet import find_live_pets
+
+    if opcode == 0x1891:
+        boxes = apply_boxes(payload, db_path=db_path)
+        return {"kind": "boxes", "updated": boxes.get("updated", 0), "boxes": boxes.get("boxes", 0), "new": 0}
+    if opcode == 0x1888:
+        moves = apply_box_moves(payload, db_path=db_path)
+        return {"kind": "box_moves", "updated": moves.get("updated", 0), "new": 0}
+    if opcode == 0x1808:
+        gifted = mark_gifted(payload, db_path=db_path)
+        return {"kind": "gift", "updated": gifted, "new": 0}
+    if opcode not in SESSION_OPCODES:
+        return {"kind": "", "updated": 0, "new": 0}
+
+    pets = find_live_pets(payload, max_add_age=180 if opcode in _RECENT_PET_OPCODES else None)
+    records = [row for pet in pets if (row := pet_record(pet))]
+    new_count = 0
+    updated_count = 0
+    if records:
+        written = upsert_pets(records, db_path=db_path, mark_missing=False)
+        new_count = written.get("new", 0)
+        updated_count = written.get("updated", 0)
+    if opcode in _BOX_WITH_NEW_PET and records:
+        gids = {row["serial_num"] for row in records}
+        apply_box_moves(payload, db_path=db_path, only_gids=gids)
+    return {"kind": "pets", "updated": updated_count, "new": new_count}
 
 
 def empty_capture_reason(engine) -> str:
