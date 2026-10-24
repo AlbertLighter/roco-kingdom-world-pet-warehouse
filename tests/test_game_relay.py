@@ -1,3 +1,4 @@
+import socket
 import unittest
 
 from Crypto.Cipher import AES
@@ -70,3 +71,51 @@ class GameRelayParseTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GameRelayKickHelpersTests(unittest.TestCase):
+    def test_inet_addr_and_port_dword(self):
+        from scripts.game_relay import _inet_addr, _tcp_port_dword
+
+        # 1.2.3.4 -> LSB ??????? MIB_TCPROW ??? Windows ????
+        self.assertEqual(_inet_addr("1.2.3.4") & 0xFF, 0x01)
+        self.assertEqual((_inet_addr("1.2.3.4") >> 8) & 0xFF, 0x02)
+        self.assertEqual(_tcp_port_dword(8195), socket.htons(8195) & 0xFFFF)
+
+    def test_list_game_tcp_filters_by_remote_port(self):
+        from unittest.mock import MagicMock, patch
+        import psutil
+        from scripts import game_relay
+
+        fake_conn_ok = MagicMock()
+        fake_conn_ok.laddr = MagicMock(ip="10.0.0.2", port=50000)
+        fake_conn_ok.raddr = MagicMock(ip="1.2.3.4", port=8195)
+        fake_conn_ok.status = psutil.CONN_ESTABLISHED
+
+        fake_conn_other = MagicMock()
+        fake_conn_other.laddr = MagicMock(ip="10.0.0.2", port=50001)
+        fake_conn_other.raddr = MagicMock(ip="1.2.3.4", port=443)
+        fake_conn_other.status = psutil.CONN_ESTABLISHED
+
+        fake_proc = MagicMock()
+        fake_proc.net_connections.return_value = [fake_conn_ok, fake_conn_other]
+
+        with patch.object(game_relay, "_find_pid", return_value=1234), patch("psutil.Process", return_value=fake_proc):
+            rows = game_relay.list_game_tcp_to_port("NRC-Win64-Shipping.exe", 8195)
+        self.assertEqual(rows, [("10.0.0.2", 50000, "1.2.3.4", 8195)])
+
+    def test_reset_tcp_connections_calls_set_tcp_entry(self):
+        from unittest.mock import MagicMock, patch
+        from scripts import game_relay
+
+        if __import__("os").name != "nt":
+            self.skipTest("SetTcpEntry only on Windows")
+
+        fake_api = MagicMock()
+        fake_api.SetTcpEntry.return_value = 0
+        with patch("ctypes.windll.iphlpapi", fake_api, create=True):
+            ok, errors = game_relay.reset_tcp_connections([("10.0.0.2", 50000, "1.2.3.4", 8195)])
+        self.assertEqual(ok, 1)
+        self.assertEqual(errors, [])
+        self.assertEqual(fake_api.SetTcpEntry.call_count, 1)
+

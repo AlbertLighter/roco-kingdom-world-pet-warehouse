@@ -497,7 +497,7 @@ def record_divert(seconds: int | None = None, progress=None) -> dict:
             total_page,
         )
 
-    emit("正在把游戏的 8195 改道到本机。请在这之后进入游戏。抓到精灵列表会自动写入仓库。点停止记录后结束。")
+    emit("正在把游戏的 8195 改道到本机。若游戏已在线，会断开现有连接并等待重连；未开游戏则进游戏后自动改道。抓到精灵列表会自动写入仓库。点停止记录后结束。")
     stats = run_relay(seconds, lambda _opcode, _payload: None, progress=emit, on_frame=on_frame)
     summary = (
         f"改道记录 密钥={'有' if stats.get('key') else '无'}，"
@@ -507,7 +507,7 @@ def record_divert(seconds: int | None = None, progress=None) -> dict:
         summary = f"{summary}。{stats['fail_reason']}"
     emit(summary, saved["n"], saved["n"])
     if saved["n"] == 0 and not stats.get("key"):
-        emit("没有拿到 0x1002 会话密钥。用管理员启动服务，先点改道记录，再进入游戏。", 0, 0)
+        emit("没有拿到 0x1002 会话密钥。用管理员启动服务后点改道记录；若游戏已在线应看到「已断开…等待重连」，也可重启游戏再试。", 0, 0)
     emit(f"记录结束，共 {saved['n']} 条", saved["n"], saved["n"])
     return {
         "saved": saved["n"],

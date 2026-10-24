@@ -211,6 +211,91 @@ def _owner_pid(target_pid: int | None, cache: dict[tuple[str, int], tuple[int, f
     return found
 
 
+
+def _inet_addr(ip: str) -> int:
+    """IPv4 字符串转 MIB_TCPROW 用的网络序 DWORD。"""
+    return int.from_bytes(socket.inet_aton(ip), "little")
+
+
+def _tcp_port_dword(port: int) -> int:
+    """端口转 MIB_TCPROW 用的网络序 DWORD（高 16 位为 0）。"""
+    return socket.htons(int(port)) & 0xFFFF
+
+
+def list_game_tcp_to_port(process_name: str, remote_port: int) -> list[tuple[str, int, str, int]]:
+    """列出指定进程连向 remote_port 的 TCP 四元组（本机 IP/端口, 远端 IP/端口）。"""
+    import psutil
+
+    pid = _find_pid(process_name)
+    if pid is None:
+        return []
+    try:
+        conns = psutil.Process(pid).net_connections(kind="tcp")
+    except (psutil.Error, OSError):
+        return []
+    rows: list[tuple[str, int, str, int]] = []
+    for conn in conns:
+        if not conn.laddr or not conn.raddr:
+            continue
+        if int(conn.raddr.port) != int(remote_port):
+            continue
+        # 已建立或半关闭的连接都踢掉，让客户端重新握手
+        if conn.status not in {
+            psutil.CONN_ESTABLISHED,
+            psutil.CONN_SYN_SENT,
+            psutil.CONN_SYN_RECV,
+            psutil.CONN_FIN_WAIT1,
+            psutil.CONN_FIN_WAIT2,
+            psutil.CONN_CLOSE_WAIT,
+        }:
+            continue
+        rows.append((conn.laddr.ip, int(conn.laddr.port), conn.raddr.ip, int(conn.raddr.port)))
+    return rows
+
+
+def reset_tcp_connections(rows: list[tuple[str, int, str, int]]) -> tuple[int, list[str]]:
+    """用 Windows SetTcpEntry(DELETE_TCB) 强制结束本机 TCP 连接。返回 (成功数, 错误信息)。"""
+    if os.name != "nt" or not rows:
+        return 0, []
+    from ctypes import wintypes
+
+    class MIB_TCPROW(ctypes.Structure):
+        _fields_ = [
+            ("dwState", wintypes.DWORD),
+            ("dwLocalAddr", wintypes.DWORD),
+            ("dwLocalPort", wintypes.DWORD),
+            ("dwRemoteAddr", wintypes.DWORD),
+            ("dwRemotePort", wintypes.DWORD),
+        ]
+
+    MIB_TCP_STATE_DELETE_TCB = 12
+    iphlpapi = ctypes.windll.iphlpapi
+    ok = 0
+    errors: list[str] = []
+    for local_ip, local_port, remote_ip, remote_port in rows:
+        row = MIB_TCPROW()
+        row.dwState = MIB_TCP_STATE_DELETE_TCB
+        row.dwLocalAddr = _inet_addr(local_ip)
+        row.dwLocalPort = _tcp_port_dword(local_port)
+        row.dwRemoteAddr = _inet_addr(remote_ip)
+        row.dwRemotePort = _tcp_port_dword(remote_port)
+        code = int(iphlpapi.SetTcpEntry(ctypes.byref(row)))
+        if code == 0:
+            ok += 1
+        else:
+            errors.append(f"{local_ip}:{local_port}->{remote_ip}:{remote_port} err={code}")
+    return ok, errors
+
+
+def kick_existing_game_connections(process_name: str = GAME_PROCESS, remote_port: int = GAME_PORT) -> dict:
+    """断开游戏进程已有的 remote_port 连接，迫使客户端重连并走改道。"""
+    rows = list_game_tcp_to_port(process_name, remote_port)
+    if not rows:
+        return {"found": 0, "reset": 0, "errors": []}
+    reset, errors = reset_tcp_connections(rows)
+    return {"found": len(rows), "reset": reset, "errors": errors}
+
+
 def run_relay(seconds: int | None, on_s2c, progress=None, stop_when=None, on_frame=None) -> dict:
     """改道并转发，直到调用 stop_relay 或 stop_when() 为真。seconds 为空则不限时。"""
     global _active_stop
@@ -461,6 +546,31 @@ def run_relay(seconds: int | None, on_s2c, progress=None, stop_when=None, on_fra
         _active_stop = None
         raise RuntimeError(stats["error"])
     threading.Thread(target=divert, daemon=True).start()
+    # 等 WinDivert 句柄就绪后再踢掉已有直连，这样重连会立刻进代理
+    for _ in range(40):
+        if divert_box.get("wd") is not None or stop.is_set():
+            break
+        time.sleep(0.05)
+    if not stop.is_set():
+        try:
+            kicked = kick_existing_game_connections()
+        except Exception as exc:
+            report(f"断开已有游戏连接时出错: {exc}")
+            kicked = {"found": 0, "reset": 0, "errors": [str(exc)]}
+        found = int(kicked.get("found") or 0)
+        reset_n = int(kicked.get("reset") or 0)
+        if found:
+            report(
+                f"已断开游戏现有 TCP {reset_n}/{found} 条（端口 {GAME_PORT}），"
+                f"等待客户端重连走改道"
+            )
+            for err in (kicked.get("errors") or [])[:5]:
+                report(f"断开连接失败: {err}")
+        else:
+            report(
+                f"未发现 {GAME_PROCESS} 连向 {GAME_PORT} 的现有连接；"
+                f"若游戏未开，进游戏后会自动改道"
+            )
     try:
         while not stop.is_set():
             if deadline is not None and time.time() >= deadline:
