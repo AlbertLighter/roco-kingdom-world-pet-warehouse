@@ -1316,13 +1316,12 @@ def compute_species_recommendations(
     决策顺序：
       1. mutation IN (1,8,9) → 无条件保留
       2. 慈悲为怀 → 全部保留
-      3. 已佩戴婉转声勋章 (1026) → 倾向保留
-      4. 同乘 → 选最优 1 只保留
-      5. 爱分享 → 选最优 1 只保留
-      6. 疾行 → 用同乘排序逻辑，选最优 1 只保留
-      7. 母方体型最优 → 各家族保留体型最大的母方 1 只
-      8. 普通精灵按评分排序（含音高），保留前 keep_count 只
-      9. 其余标记为建议放生
+      3. 同乘 → 选最优 1 只保留
+      4. 爱分享 → 选最优 1 只保留
+      5. 疾行 → 用同乘排序逻辑，选最优 1 只保留
+      6. 母方体型最优 → 各家族保留体型最大的母方 1 只
+      7. 普通精灵按评分排序（含音高），保留前 keep_count 只
+      8. 其余标记为建议放生
 
     返回: {
         "total_count": int,
@@ -1354,15 +1353,7 @@ def compute_species_recommendations(
         kept_serials.add(p["serial_num"])
         kept_reasons.setdefault(p["serial_num"], []).append(_KEEP_REASON_TEMPLATES["mercy"])
 
-    # --- 步骤 3: 婉转声勋章倾向保留（不强行放生其它勋章宠） ---
-    for p in all_pets:
-        if p["serial_num"] in kept_serials:
-            continue
-        if MEDAL_MELODIOUS in _medal_id_set(p):
-            kept_serials.add(p["serial_num"])
-            kept_reasons.setdefault(p["serial_num"], []).append(_KEEP_REASON_TEMPLATES["melodious_medal"])
-
-    # --- 步骤 4: 同乘优选 ---
+    # --- 步骤 3: 同乘优选 ---
     ride_pets = [
         p for p in all_pets
         if p.get("talent_skill", 0) == TALENT_SKILL_RIDE
@@ -1373,7 +1364,7 @@ def compute_species_recommendations(
         kept_serials.add(ranked_rides[0]["serial_num"])
         kept_reasons.setdefault(ranked_rides[0]["serial_num"], []).append(_KEEP_REASON_TEMPLATES["ride_best"])
 
-    # --- 步骤 5: 爱分享优选 ---
+    # --- 步骤 4: 爱分享优选 ---
     share_pets = [
         p for p in all_pets
         if p.get("talent_skill", 0) == TALENT_SKILL_SHARE
@@ -1388,7 +1379,7 @@ def compute_species_recommendations(
         kept_serials.add(ranked_shares[0]["serial_num"])
         kept_reasons.setdefault(ranked_shares[0]["serial_num"], []).append(_KEEP_REASON_TEMPLATES["share_best"])
 
-    # --- 步骤 6: 疾行优选（用同乘排序逻辑，只保留最优 1 只）---
+    # --- 步骤 5: 疾行优选（用同乘排序逻辑，只保留最优 1 只）---
     dash_pets = [
         p for p in all_pets
         if p.get("talent_skill", 0) == TALENT_SKILL_DASH
@@ -1399,7 +1390,7 @@ def compute_species_recommendations(
         kept_serials.add(ranked_dash[0]["serial_num"])
         kept_reasons.setdefault(ranked_dash[0]["serial_num"], []).append(_KEEP_REASON_TEMPLATES["dash_best"])
 
-    # --- 步骤 7: 母方体型最优保留（用于繁育）---
+    # --- 步骤 6: 母方体型最优保留（用于繁育）---
     female_pets = [
         p for p in all_pets
         if p.get("gender", 0) == 2
@@ -1410,7 +1401,7 @@ def compute_species_recommendations(
         kept_serials.add(female_pets[0]["serial_num"])
         kept_reasons.setdefault(female_pets[0]["serial_num"], []).append(_KEEP_REASON_TEMPLATES["female_best"])
 
-    # --- 步骤 8: 常规评分排序（含 voice 音高） ---
+    # --- 步骤 7: 常规评分排序（含 voice 音高） ---
     normal_pets = [p for p in all_pets if p["serial_num"] not in kept_serials]
     scored_pets = []
     for p in normal_pets:
@@ -1428,7 +1419,7 @@ def compute_species_recommendations(
         kept_serials.add(sp["serial_num"])
         kept_reasons.setdefault(sp["serial_num"], []).append(_KEEP_REASON_TEMPLATES["normal_top"])
 
-    # --- 步骤 9: 确定推荐放生集 ---
+    # --- 步骤 8: 确定推荐放生集 ---
     result_pets = []
     recommended_serials = []
     for p in all_pets:
@@ -1478,7 +1469,6 @@ _KEEP_REASON_TEMPLATES = {
     "share_best": "爱分享优选保留（总天赋最高）",
     "dash_best": "疾行优选保留",
     "female_best": "母方体型最优，用于繁育",
-    "melodious_medal": "已佩戴婉转声勋章，倾向保留",
     "normal_top": "常规评分排名靠前",
 }
 

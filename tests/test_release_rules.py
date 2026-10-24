@@ -73,16 +73,14 @@ class ReleaseAndBreedTests(unittest.TestCase):
         high = _pet(2, voice=100)
         self.assertGreater(compute_pet_score(high), compute_pet_score(low))
 
-    def test_release_keeps_melodious_medal(self):
+    def test_release_does_not_hard_keep_melodious_medal(self):
+        # 婉转声勋章只参与音高评分，不再硬性全留
         pets = [
             _pet(1, medal="1026", voice=99),
-            _pet(2, voice=10),
-            _pet(3, voice=10),
-            _pet(4, voice=10),
         ]
-        result = compute_species_recommendations(pets, {}, keep_count=1)
-        self.assertIn(1, set(result["kept_serials"]))
-        self.assertNotIn(1, set(result["recommended_serials"]))
+        result = compute_species_recommendations(pets, {}, keep_count=0)
+        self.assertNotIn(1, set(result["kept_serials"]))
+        self.assertIn(1, set(result["recommended_serials"]))
 
     def test_breeding_high_voice_prefers_high_parents(self):
         from backend.main import score_breeding_pair
