@@ -134,6 +134,21 @@ function formatEggGroup(raw) {
     }
 }
 
+
+function formatVoiceLabel(voice) {
+    // 仅缺省显示 —；voice=0 是有效音高，必须显示 0
+    if (voice === null || voice === undefined || voice === "") {
+        return "嗓音 —";
+    }
+    const value = Number(voice);
+    if (Number.isNaN(value)) return "嗓音 —";
+    let hint = "";
+    if (value >= 90) hint = " · 偏高";
+    else if (value < 0 || value <= 10) hint = " · 偏低";
+    const sign = value > 0 ? "+" : "";
+    return `嗓音 ${sign}${value}${hint}`;
+}
+
 function createPetCard(pet) {
     if (!pet || pet.serial_num == null) {
         return '';
@@ -180,6 +195,7 @@ function createPetCard(pet) {
             <div class="extra-info">
                 ${renderRuler('身高', pet.height, pet.base_height_low, pet.base_height_high, 100, 'm')}
                 ${renderRuler('体重', pet.weight, pet.base_weight_low, pet.base_weight_high, 1000, 'kg')}
+                <div title="Pet_Vo_Pitch / voice">${formatVoiceLabel(pet.voice)}</div>
                 <div>蛋组: ${eggStr}</div>
                 <div title="${escapeHtml(pet.medal || '')}">🏅 ${medalStr}</div>
             </div>
