@@ -177,6 +177,7 @@ def init_db():
         equip_skill_4 INTEGER DEFAULT 0,
         mutation INTEGER DEFAULT 0,
         talent_skill INTEGER DEFAULT 0,
+        voice INTEGER,
         FOREIGN KEY (base_id) REFERENCES pet_base_info (id)
     )
     """)
@@ -207,6 +208,7 @@ def init_db():
         use_king_ball INTEGER DEFAULT 0,
         king_ball_attr TEXT,
         breed_big_size INTEGER DEFAULT 0,
+        breed_high_voice INTEGER DEFAULT 0,
         FOREIGN KEY (father_serial) REFERENCES pet_instances(serial_num),
         FOREIGN KEY (mother_serial) REFERENCES pet_instances(serial_num)
     )
@@ -233,6 +235,8 @@ def init_db():
         ("breeding_slots", "use_king_ball", "INTEGER DEFAULT 0"),
         ("breeding_slots", "king_ball_attr", "TEXT"),
         ("breeding_slots", "breed_big_size", "INTEGER DEFAULT 0"),
+        ("breeding_slots", "breed_high_voice", "INTEGER DEFAULT 0"),
+        ("pet_instances", "voice", "INTEGER"),
         ("pet_base_info", "handbook_id", "INTEGER"),
     ]
     for table, col, typedef in _migrate_cols:
@@ -316,6 +320,17 @@ _sync_lock = threading.Lock()
 _sync_meta = threading.Lock()
 _sync_holder = {"name": "", "since": 0.0}
 _gender_sync_lock = threading.Lock()
+_packet_job_lock = threading.Lock()
+_packet_job = {
+    "running": False,
+    "mode": None,
+    "started_at": None,
+    "label": "",
+    "message": "",
+    "saved": 0,
+    "no_key": 0,
+    "bad_key": 0,
+}
 
 
 def _begin_sync(name: str) -> bool:
@@ -347,6 +362,73 @@ def _end_sync() -> None:
         _sync_holder["since"] = 0.0
     _sync_lock.release()
     _sync_logger.info("任务结束：%s，用时 %.1f 秒", name, elapsed)
+
+
+def _packet_job_snapshot() -> dict:
+    with _packet_job_lock:
+        job = dict(_packet_job)
+    with _sync_meta:
+        name = _sync_holder["name"] or ""
+        since = _sync_holder["since"] or 0.0
+    # 以同步锁持有者为准，刷新页面后仍能看到改道记录是否在跑
+    recording = bool(name.startswith("抓包记录"))
+    mode = job.get("mode")
+    if recording and not mode:
+        if "mode=divert" in name:
+            mode = "divert"
+        elif "mode=pcap" in name:
+            mode = "pcap"
+    started_at = job.get("started_at")
+    if recording and not started_at and since:
+        started_at = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(since))
+    return {
+        "running": recording,
+        "idle": not recording,
+        "mode": mode if recording else None,
+        "started_at": started_at if recording else None,
+        "label": name if recording else "",
+        "message": job.get("message") or "",
+        "saved": int(job.get("saved") or 0),
+        "no_key": int(job.get("no_key") or 0),
+        "bad_key": int(job.get("bad_key") or 0),
+    }
+
+
+def _packet_job_start(mode: str, label: str) -> None:
+    with _packet_job_lock:
+        _packet_job.update({
+            "running": True,
+            "mode": mode,
+            "started_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()),
+            "label": label,
+            "message": "正在启动…",
+            "saved": 0,
+            "no_key": 0,
+            "bad_key": 0,
+        })
+
+
+def _packet_job_progress(message: str, current: int = 0, total: int = 0) -> None:
+    with _packet_job_lock:
+        _packet_job["message"] = message or _packet_job.get("message") or ""
+        if current:
+            _packet_job["saved"] = max(int(_packet_job.get("saved") or 0), int(current))
+
+
+def _packet_job_finish(result: dict | None = None, error: str | None = None) -> None:
+    with _packet_job_lock:
+        if result:
+            _packet_job["saved"] = int(result.get("saved") or _packet_job.get("saved") or 0)
+            _packet_job["no_key"] = int(result.get("no_key") or 0)
+            _packet_job["bad_key"] = int(result.get("bad_key") or 0)
+            summary = result.get("summary") or ""
+            _packet_job["message"] = error or summary or "记录已结束"
+        elif error:
+            _packet_job["message"] = error
+        _packet_job["running"] = False
+        _packet_job["mode"] = None
+        _packet_job["started_at"] = None
+        _packet_job["label"] = ""
 
 
 def _sse(progress_queue: queue.Queue):
@@ -806,7 +888,8 @@ def sync_single_pet(serial_num: int):
             medal = ?, catch_ball = ?, height = ?, weight = ?,
             bloodline = ?, skill_dam_type = ?,
             equip_skill_1 = ?, equip_skill_2 = ?, equip_skill_3 = ?, equip_skill_4 = ?,
-            mutation = ?, talent_skill = ?
+            mutation = ?, talent_skill = ?,
+            voice = COALESCE(?, voice)
         WHERE serial_num = ?
         """, (
             detail.get("PetBaseId", 0),
@@ -844,6 +927,7 @@ def sync_single_pet(serial_num: int):
             detail.get("EquipSkill4", 0),
             detail.get("PetMutation", 0),
             detail.get("PetTalentSkill", 0),
+            _detail_voice(detail),
             serial_num
         ))
     else:
@@ -857,8 +941,8 @@ def sync_single_pet(serial_num: int):
             is_active, gender, medal, catch_ball, height, weight,
             bloodline, skill_dam_type,
             equip_skill_1, equip_skill_2, equip_skill_3, equip_skill_4,
-            mutation, talent_skill
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            mutation, talent_skill, voice
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             int(detail["SerialNum"]),
             detail["PetBaseId"],
@@ -895,7 +979,8 @@ def sync_single_pet(serial_num: int):
             detail.get("EquipSkill3", 0),
             detail.get("EquipSkill4", 0),
             detail.get("PetMutation", 0),
-            detail.get("PetTalentSkill", 0)
+            detail.get("PetTalentSkill", 0),
+            _detail_voice(detail),
         ))
 
     conn.commit()
@@ -1072,6 +1157,70 @@ TALENT_SKILL_SHARE = 1001        # 爱分享
 TALENT_SKILL_MERCY = 50001       # 慈悲为怀
 MUTATION_KEEP = {1, 8, 9}        # 异色/炫彩/异色炫彩，无条件保留
 SPEED_NATURES = {21, 22, 23, 24, 25}  # 加速度的性格 ID（来自 NATURE_CONF）
+MEDAL_MELODIOUS = 1026           # 婉转声：种内最高约 2% 音高
+MEDAL_HARSH = 1025               # 粗嗓门：种内最低约 2% 音高
+
+
+def _coerce_voice(raw) -> int | None:
+    """把抓包/接口里的 voice 收成可存的整数。过大的无符号溢出视为低音（约 -100）。"""
+    if raw is None or raw == "":
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if -200 <= value <= 200:
+        return value
+    # JSON/无符号解码把负音高变成超大整数时，按粗嗓门方向记低音
+    if value > 1000:
+        return -100
+    return None
+
+
+def _detail_voice(detail: dict):
+    """HTTP 详情里若有 voice 类字段则映射，否则 None（不臆造）。"""
+    if not isinstance(detail, dict):
+        return None
+    for key in ("Voice", "PetVoice", "voice", "Pet_Vo_Pitch", "petVoice"):
+        if key in detail and detail[key] is not None and detail[key] != "":
+            return _coerce_voice(detail[key])
+    return None
+
+
+def _medal_id_set(pet: dict) -> set[int]:
+    raw = pet.get("medal")
+    if raw is None or raw == "" or raw == 0:
+        return set()
+    if isinstance(raw, (list, tuple)):
+        items = raw
+    else:
+        text = str(raw).strip()
+        if not text:
+            return set()
+        if text.startswith("["):
+            try:
+                import json as _json
+                items = _json.loads(text)
+            except Exception:
+                items = [text]
+        else:
+            items = [part.strip() for part in text.replace(";", ",").split(",") if part.strip()]
+    out = set()
+    for item in items:
+        try:
+            out.add(int(item))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _get_voice_unit(pet: dict) -> float | None:
+    """音高归一化到 0~1：高 voice / 婉转声方向接近 1；未知返回 None。"""
+    value = _coerce_voice(pet.get("voice"))
+    if value is None:
+        return None
+    # 实测多为 0~100；负值表示低音。统一映射 -100..100 → 0..1
+    return max(0.0, min(1.0, (value + 100) / 200.0))
 
 
 def compute_pet_score(pet: dict, preferred_nature_ids: list = None) -> float:
@@ -1084,6 +1233,7 @@ def compute_pet_score(pet: dict, preferred_nature_ids: list = None) -> float:
       - 体型分 (0~30): 身高体重在该品种范围内的百分位均值 * 30
       - 性格分 (0~30): 匹配任一偏好=30, 未指定=15, 不匹配=10
       - 特长加分 (0~10): 有特长=7, 慈悲为怀=10, 无=0
+      - 音高分 (0~10): 倾向保留婉转声（高 voice）；未知给中性 5。已佩戴婉转声勋章额外偏高。
     """
     if preferred_nature_ids is None:
         preferred_nature_ids = []
@@ -1117,7 +1267,21 @@ def compute_pet_score(pet: dict, preferred_nature_ids: list = None) -> float:
     else:
         skill_bonus = 0
 
-    score = talent_score + rank_score + size_score + nature_score + skill_bonus
+    # 6. 音高分 (0~10)：与体型类似，越高越值得留；婉转声勋章视为高音
+    medals = _medal_id_set(pet)
+    if MEDAL_MELODIOUS in medals:
+        voice_score = 10.0
+    else:
+        voice_unit = _get_voice_unit(pet)
+        if voice_unit is None:
+            voice_score = 5.0
+        else:
+            voice_score = voice_unit * 10
+            # 粗嗓门勋章且无高音数据时略降，但不强行打穿其它保留规则
+            if MEDAL_HARSH in medals:
+                voice_score = min(voice_score, 2.0)
+
+    score = talent_score + rank_score + size_score + nature_score + skill_bonus + voice_score
     return round(min(100, score), 1)
 
 
@@ -1152,12 +1316,13 @@ def compute_species_recommendations(
     决策顺序：
       1. mutation IN (1,8,9) → 无条件保留
       2. 慈悲为怀 → 全部保留
-      3. 同乘 → 选最优 1 只保留
-      4. 爱分享 → 选最优 1 只保留
-      5. 疾行 → 用同乘排序逻辑，选最优 1 只保留
-      6. 母方体型最优 → 各家族保留体型最大的母方 1 只
-      7. 普通精灵按评分排序，保留前 keep_count 只
-      8. 其余标记为建议放生
+      3. 已佩戴婉转声勋章 (1026) → 倾向保留
+      4. 同乘 → 选最优 1 只保留
+      5. 爱分享 → 选最优 1 只保留
+      6. 疾行 → 用同乘排序逻辑，选最优 1 只保留
+      7. 母方体型最优 → 各家族保留体型最大的母方 1 只
+      8. 普通精灵按评分排序（含音高），保留前 keep_count 只
+      9. 其余标记为建议放生
 
     返回: {
         "total_count": int,
@@ -1189,7 +1354,15 @@ def compute_species_recommendations(
         kept_serials.add(p["serial_num"])
         kept_reasons.setdefault(p["serial_num"], []).append(_KEEP_REASON_TEMPLATES["mercy"])
 
-    # --- 步骤 3: 同乘优选 ---
+    # --- 步骤 3: 婉转声勋章倾向保留（不强行放生其它勋章宠） ---
+    for p in all_pets:
+        if p["serial_num"] in kept_serials:
+            continue
+        if MEDAL_MELODIOUS in _medal_id_set(p):
+            kept_serials.add(p["serial_num"])
+            kept_reasons.setdefault(p["serial_num"], []).append(_KEEP_REASON_TEMPLATES["melodious_medal"])
+
+    # --- 步骤 4: 同乘优选 ---
     ride_pets = [
         p for p in all_pets
         if p.get("talent_skill", 0) == TALENT_SKILL_RIDE
@@ -1200,7 +1373,7 @@ def compute_species_recommendations(
         kept_serials.add(ranked_rides[0]["serial_num"])
         kept_reasons.setdefault(ranked_rides[0]["serial_num"], []).append(_KEEP_REASON_TEMPLATES["ride_best"])
 
-    # --- 步骤 4: 爱分享优选 ---
+    # --- 步骤 5: 爱分享优选 ---
     share_pets = [
         p for p in all_pets
         if p.get("talent_skill", 0) == TALENT_SKILL_SHARE
@@ -1215,7 +1388,7 @@ def compute_species_recommendations(
         kept_serials.add(ranked_shares[0]["serial_num"])
         kept_reasons.setdefault(ranked_shares[0]["serial_num"], []).append(_KEEP_REASON_TEMPLATES["share_best"])
 
-    # --- 步骤 5: 疾行优选（用同乘排序逻辑，只保留最优 1 只）---
+    # --- 步骤 6: 疾行优选（用同乘排序逻辑，只保留最优 1 只）---
     dash_pets = [
         p for p in all_pets
         if p.get("talent_skill", 0) == TALENT_SKILL_DASH
@@ -1226,7 +1399,7 @@ def compute_species_recommendations(
         kept_serials.add(ranked_dash[0]["serial_num"])
         kept_reasons.setdefault(ranked_dash[0]["serial_num"], []).append(_KEEP_REASON_TEMPLATES["dash_best"])
 
-    # --- 步骤 6: 母方体型最优保留（用于繁育）---
+    # --- 步骤 7: 母方体型最优保留（用于繁育）---
     female_pets = [
         p for p in all_pets
         if p.get("gender", 0) == 2
@@ -1237,7 +1410,7 @@ def compute_species_recommendations(
         kept_serials.add(female_pets[0]["serial_num"])
         kept_reasons.setdefault(female_pets[0]["serial_num"], []).append(_KEEP_REASON_TEMPLATES["female_best"])
 
-    # --- 步骤 7: 常规评分排序 ---
+    # --- 步骤 8: 常规评分排序（含 voice 音高） ---
     normal_pets = [p for p in all_pets if p["serial_num"] not in kept_serials]
     scored_pets = []
     for p in normal_pets:
@@ -1255,7 +1428,7 @@ def compute_species_recommendations(
         kept_serials.add(sp["serial_num"])
         kept_reasons.setdefault(sp["serial_num"], []).append(_KEEP_REASON_TEMPLATES["normal_top"])
 
-    # --- 步骤 8: 确定推荐放生集 ---
+    # --- 步骤 9: 确定推荐放生集 ---
     result_pets = []
     recommended_serials = []
     for p in all_pets:
@@ -1305,6 +1478,7 @@ _KEEP_REASON_TEMPLATES = {
     "share_best": "爱分享优选保留（总天赋最高）",
     "dash_best": "疾行优选保留",
     "female_best": "母方体型最优，用于繁育",
+    "melodious_medal": "已佩戴婉转声勋章，倾向保留",
     "normal_top": "常规评分排名靠前",
 }
 
@@ -1321,6 +1495,7 @@ _RELEASE_REASON_TEMPLATES = {
     "no_talent_low": "无特长，天赋总和较低",
     "beyond_quota": "已超出该品种最少保留数量",
     "low_score": "综合评分较低",
+    "low_voice": "音高偏低（粗嗓门方向），其它条件一般",
 }
 
 
@@ -1342,6 +1517,11 @@ def _compute_release_reasons(pet: dict, preferred_nature_ids: list, species_pets
 
     if preferred_nature_ids and pet.get("nature", 0) not in preferred_nature_ids:
         reasons.append("性格与该品种偏好不匹配")
+
+    voice_unit = _get_voice_unit(pet)
+    medals = _medal_id_set(pet)
+    if MEDAL_HARSH in medals or (voice_unit is not None and voice_unit <= 0.25):
+        reasons.append(_RELEASE_REASON_TEMPLATES["low_voice"])
 
     if not reasons:
         reasons.append(_RELEASE_REASON_TEMPLATES["beyond_quota"])
@@ -1412,6 +1592,7 @@ def score_breeding_pair(
     use_king_ball: bool,
     king_ball_attr: str | None,
     breed_big_size: bool,
+    breed_high_voice: bool = False,
 ) -> dict | None:
     """和推荐接口同一套打分。性别未知、自己配自己、蛋组或进化链对不上时返回 None。"""
     if mother.get("serial_num") == father.get("serial_num"):
@@ -1435,7 +1616,17 @@ def score_breeding_pair(
     size_score = 0.0
     if breed_big_size:
         size_score = (_get_size_score(mother) + _get_size_score(father)) / 2
-    return _build_pair(mother, father, attr_prob * nature_prob, size_score)
+    voice_score = 0.0
+    if breed_high_voice:
+        units = []
+        for parent in (mother, father):
+            unit = _get_voice_unit(parent)
+            if MEDAL_MELODIOUS in _medal_id_set(parent):
+                unit = 1.0 if unit is None else max(unit, 0.95)
+            if unit is not None:
+                units.append(unit)
+        voice_score = sum(units) / len(units) if units else 0.0
+    return _build_pair(mother, father, attr_prob * nature_prob, size_score, voice_score)
 
 
 def _calc_nature_prob(mother: dict, father: dict, desired_nature_id: int, natures_count: int) -> float:
@@ -1449,18 +1640,26 @@ def _calc_nature_prob(mother: dict, father: dict, desired_nature_id: int, nature
     return p
 
 
-def _build_pair(mother: dict, father: dict, total_prob: float, size_score: float) -> dict:
+def _build_pair(
+    mother: dict,
+    father: dict,
+    total_prob: float,
+    size_score: float,
+    voice_score: float = 0.0,
+) -> dict:
     """Build recommendation dict for a mother-father pair."""
     mother_full = dict(mother)
     mother_full["name"] = mother["base_name"]
     father_full = dict(father)
     father_full["name"] = father["base_name"]
-    score = round(total_prob * 100 + size_score * 50, 2)
+    # 体型/音高倾向各最多 +50；音高遗传公式未知，只偏好高 voice 父母，不发明遗传模型
+    score = round(total_prob * 100 + size_score * 50 + voice_score * 50, 2)
     return {
         "mother": mother_full,
         "father": father_full,
         "probability": total_prob,
         "size_score": round(size_score * 100, 2),
+        "voice_score": round(voice_score * 100, 2),
         "score": score
     }
 
@@ -1472,7 +1671,8 @@ def recommend_parents(
     desired_stats: list[str] = Body([]),
     use_king_ball: bool = Body(False),
     king_ball_attr: str | None = Body(None),
-    breed_big_size: bool = Body(False)
+    breed_big_size: bool = Body(False),
+    breed_high_voice: bool = Body(False),
 ):
     conn = get_db_connection()
     try:
@@ -1526,6 +1726,7 @@ def recommend_parents(
                     use_king_ball,
                     king_ball_attr,
                     breed_big_size,
+                    breed_high_voice,
                 )
                 if pair:
                     recommendations.append(pair)
@@ -1558,6 +1759,7 @@ def get_breeding_slots():
         SELECT
             s.slot_id, s.target_base_id, s.father_serial, s.mother_serial,
             s.nature_id, s.talents, s.use_king_ball, s.king_ball_attr, s.breed_big_size,
+            s.breed_high_voice,
             s.updated_at,
             b.name as target_name,
             f.serial_num as f_serial, f.name as f_name, f.level as f_level,
@@ -1591,6 +1793,7 @@ def get_breeding_slots():
             "use_king_ball": d["use_king_ball"],
             "king_ball_attr": d["king_ball_attr"],
             "breed_big_size": d["breed_big_size"],
+            "breed_high_voice": d["breed_high_voice"],
             "updated_at": d["updated_at"],
         }
         if d["f_serial"]:
@@ -1669,10 +1872,11 @@ def update_breeding_slots(slots: list[dict] = Body(...)):
         use_king_ball = 1 if s.get("use_king_ball") else 0
         king_ball_attr = s.get("king_ball_attr")
         breed_big_size = 1 if s.get("breed_big_size") else 0
+        breed_high_voice = 1 if s.get("breed_high_voice") else 0
         cursor.execute(
-            "UPDATE breeding_slots SET target_base_id=?, father_serial=?, mother_serial=?, nature_id=?, talents=?, use_king_ball=?, king_ball_attr=?, breed_big_size=?, updated_at=datetime('now','localtime') WHERE slot_id=?",
+            "UPDATE breeding_slots SET target_base_id=?, father_serial=?, mother_serial=?, nature_id=?, talents=?, use_king_ball=?, king_ball_attr=?, breed_big_size=?, breed_high_voice=?, updated_at=datetime('now','localtime') WHERE slot_id=?",
             (target, int(father) if father else None, int(mother) if mother else None,
-             nature_id, talents, use_king_ball, king_ball_attr, breed_big_size, sid)
+             nature_id, talents, use_king_ball, king_ball_attr, breed_big_size, breed_high_voice, sid)
         )
 
     conn.commit()
@@ -1686,7 +1890,7 @@ def add_breeding_slot(data: dict = Body(...)):
 
     查找第一个空槽位写入；如果目标精灵已存在某槽位，则覆盖该槽位。
     Body: {target_base_id, father_serial, mother_serial,
-           nature_id, talents, use_king_ball, king_ball_attr, breed_big_size}
+           nature_id, talents, use_king_ball, king_ball_attr, breed_big_size, breed_high_voice}
     """
     target_base_id = data.get("target_base_id")
     father_serial = data.get("father_serial")
@@ -1703,6 +1907,7 @@ def add_breeding_slot(data: dict = Body(...)):
     use_king_ball = 1 if data.get("use_king_ball") else 0
     king_ball_attr = data.get("king_ball_attr")
     breed_big_size = 1 if data.get("breed_big_size") else 0
+    breed_high_voice = 1 if data.get("breed_high_voice") else 0
 
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -1744,8 +1949,8 @@ def add_breeding_slot(data: dict = Body(...)):
             raise HTTPException(status_code=409, detail="5个槽位已满，请先删除一个")
 
     cursor.execute(
-        "UPDATE breeding_slots SET target_base_id=?, father_serial=?, mother_serial=?, nature_id=?, talents=?, use_king_ball=?, king_ball_attr=?, breed_big_size=?, updated_at=datetime('now','localtime') WHERE slot_id=?",
-        (target_base_id, int(father_serial), int(mother_serial), nature_id, talents, use_king_ball, king_ball_attr, breed_big_size, slot_id)
+        "UPDATE breeding_slots SET target_base_id=?, father_serial=?, mother_serial=?, nature_id=?, talents=?, use_king_ball=?, king_ball_attr=?, breed_big_size=?, breed_high_voice=?, updated_at=datetime('now','localtime') WHERE slot_id=?",
+        (target_base_id, int(father_serial), int(mother_serial), nature_id, talents, use_king_ball, king_ball_attr, breed_big_size, breed_high_voice, slot_id)
     )
     conn.commit()
     conn.close()
@@ -1760,7 +1965,7 @@ def clear_breeding_slot(slot_id: int):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE breeding_slots SET target_base_id=NULL, father_serial=NULL, mother_serial=NULL, nature_id=NULL, talents=NULL, use_king_ball=0, king_ball_attr=NULL, breed_big_size=0, updated_at=datetime('now','localtime') WHERE slot_id=?",
+        "UPDATE breeding_slots SET target_base_id=NULL, father_serial=NULL, mother_serial=NULL, nature_id=NULL, talents=NULL, use_king_ball=0, king_ball_attr=NULL, breed_big_size=0, breed_high_voice=0, updated_at=datetime('now','localtime') WHERE slot_id=?",
         (slot_id,)
     )
     conn.commit()
@@ -1886,6 +2091,7 @@ def check_breeding_slots():
                     bool(slot.get("use_king_ball")),
                     slot.get("king_ball_attr"),
                     bool(slot.get("breed_big_size")),
+                    bool(slot.get("breed_high_voice")),
                 )
                 if pair and pair["score"] > best_score:
                     best_score = pair["score"]
@@ -2144,6 +2350,8 @@ def get_release_recommendations(
                 **{f"{s}_talent": raw.get(f"{s}_talent", 0) for s in _STAT_COLS},
                 "height": raw.get("height"),
                 "weight": raw.get("weight"),
+                "voice": raw.get("voice"),
+                "medal": raw.get("medal"),
                 "score": rp["score"],
                 "reasons": rp["reasons"],
                 "is_recommended": rp["is_recommended"],
@@ -2461,8 +2669,15 @@ def api_import_packet_exports():
         raise HTTPException(status_code=404, detail=str(exc))
 
 
+@app.get("/api/packets/record_status")
+def api_packets_record_status():
+    """抓包记录状态（服务端进程内）。刷新页面后仍可看到 divert/pcap 是否在跑。"""
+    return _packet_job_snapshot()
+
+
 @app.post("/api/packets/stop")
 def api_stop_packets():
+
     """结束当前不限时的改道记录。"""
     from scripts.game_relay import stop_relay
 
@@ -2492,21 +2707,29 @@ def api_record_packets(payload: dict | None = Body(default=None)):
         label += f" path={path or '未指定'}"
 
     def worker(progress_queue: queue.Queue):
+        _packet_job_start(mode, label)
+
         def progress_callback(message, current=0, total=0):
+            _packet_job_progress(message, current, total)
             progress_queue.put({"message": message, "current": current, "total": total})
 
-        if mode == "divert":
-            result = record_divert(progress=progress_callback)
-        else:
-            result = record_live(mode, iface=iface, pcap=path, progress=progress_callback)
-        progress_queue.put({"done": True, "result": result})
-        _sync_logger.info(
-            "抓包记录完成：saved=%s no_key=%s bad_key=%s %s",
-            result.get("saved", 0),
-            result.get("no_key", 0),
-            result.get("bad_key", 0),
-            result.get("summary", ""),
-        )
+        try:
+            if mode == "divert":
+                result = record_divert(progress=progress_callback)
+            else:
+                result = record_live(mode, iface=iface, pcap=path, progress=progress_callback)
+            _packet_job_finish(result)
+            progress_queue.put({"done": True, "result": result})
+            _sync_logger.info(
+                "抓包记录完成：saved=%s no_key=%s bad_key=%s %s",
+                result.get("saved", 0),
+                result.get("no_key", 0),
+                result.get("bad_key", 0),
+                result.get("summary", ""),
+            )
+        except Exception as exc:
+            _packet_job_finish(error=str(exc))
+            raise
 
     progress_queue = _run_locked(label, worker)
     if progress_queue is None:

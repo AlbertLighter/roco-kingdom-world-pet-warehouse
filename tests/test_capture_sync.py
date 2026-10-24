@@ -32,6 +32,7 @@ def sample_pet(**overrides):
         "mutation_type": 0,
         "ball_id": 100002,
         "speciality_id": 7,
+        "voice": 87,
         "skill_dam_type": [5],
         "attribute_info": {
             "hp": {"base_value": 310, "total_race": 125, "talent": 32},
@@ -87,6 +88,7 @@ class CaptureSyncTests(unittest.TestCase):
         self.assertEqual(record["equip_skill_1"], 222)
         self.assertEqual(record["equip_skill_2"], 111)
         self.assertEqual(record["talent_skill"], 7)
+        self.assertEqual(record["voice"], 87)
         self.assertEqual(json.loads(record["skill_dam_type"]), [5])
 
     def test_export_upsert_marks_missing_only_when_pages_complete(self):
@@ -147,6 +149,25 @@ class CaptureSyncTests(unittest.TestCase):
         records, complete = collector.snapshot()
         self.assertTrue(complete)
         self.assertEqual([row["serial_num"] for row in records], [2])
+
+
+
+    def test_voice_persists_on_upsert(self):
+        import sqlite3
+
+        upsert_pets([pet_record(sample_pet(voice=96))], db_path=self.db_path, mark_missing=False)
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(pet_instances)")}
+            self.assertIn("voice", cols)
+            value = conn.execute("SELECT voice FROM pet_instances WHERE serial_num = 42").fetchone()[0]
+            self.assertEqual(value, 96)
+        finally:
+            conn.close()
+
+    def test_voice_unsigned_wrap_becomes_low(self):
+        record = pet_record(sample_pet(voice=18446744073709552000))
+        self.assertEqual(record["voice"], -100)
 
 
 if __name__ == "__main__":

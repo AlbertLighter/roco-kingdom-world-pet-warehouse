@@ -66,5 +66,44 @@ class ReleaseAndBreedTests(unittest.TestCase):
         self.assertNotIn(10, kept)
 
 
+    def test_release_prefers_higher_voice_when_other_factors_equal(self):
+        from backend.main import compute_pet_score
+
+        low = _pet(1, voice=0)
+        high = _pet(2, voice=100)
+        self.assertGreater(compute_pet_score(high), compute_pet_score(low))
+
+    def test_release_keeps_melodious_medal(self):
+        pets = [
+            _pet(1, medal="1026", voice=99),
+            _pet(2, voice=10),
+            _pet(3, voice=10),
+            _pet(4, voice=10),
+        ]
+        result = compute_species_recommendations(pets, {}, keep_count=1)
+        self.assertIn(1, set(result["kept_serials"]))
+        self.assertNotIn(1, set(result["recommended_serials"]))
+
+    def test_breeding_high_voice_prefers_high_parents(self):
+        from backend.main import score_breeding_pair
+
+        mother_low = _pet(10, gender=2, voice=0, egg_groups="[2]")
+        mother_high = _pet(11, gender=2, voice=100, egg_groups="[2]")
+        father_low = _pet(20, gender=1, voice=0, egg_groups="[2]")
+        father_high = _pet(21, gender=1, voice=100, egg_groups="[2]")
+        for pet in (mother_low, mother_high, father_low, father_high):
+            pet["base_name"] = "测"
+            pet["egg_groups"] = "[2]"
+        low_pair = score_breeding_pair(
+            mother_low, father_low, [], None, 30, False, None, False, True
+        )
+        high_pair = score_breeding_pair(
+            mother_high, father_high, [], None, 30, False, None, False, True
+        )
+        self.assertIsNotNone(low_pair)
+        self.assertIsNotNone(high_pair)
+        self.assertGreater(high_pair["score"], low_pair["score"])
+
+
 if __name__ == "__main__":
     unittest.main()

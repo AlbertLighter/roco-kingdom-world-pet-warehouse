@@ -79,6 +79,21 @@ def _equipped_skills(pet: dict) -> list[int]:
     return slots
 
 
+def coerce_voice(raw) -> int | None:
+    """Parse PetData.voice; oversized unsigned wraps become low pitch (-100)."""
+    if raw is None or raw == "":
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if -200 <= value <= 200:
+        return value
+    if value > 1000:
+        return -100
+    return None
+
+
 def pet_record(pet: dict) -> dict | None:
     """把一条 PetData 收成 pet_instances 的列。"""
     if not isinstance(pet, dict) or pet.get("gid") is None:
@@ -129,6 +144,7 @@ def pet_record(pet: dict) -> dict | None:
         "equip_skill_4": skills[3],
         "mutation": int(pet.get("mutation_type") or 0),
         "talent_skill": int(pet.get("speciality_id") or 0),
+        "voice": coerce_voice(pet.get("voice")),
     }
 
 
@@ -285,6 +301,7 @@ _COLUMNS = (
     "hp_talent", "adAttack_talent", "apAttack_talent", "adDefense_talent", "apDefense_talent", "speed_talent",
     "gender", "medal", "catch_ball", "height", "weight", "bloodline", "skill_dam_type",
     "equip_skill_1", "equip_skill_2", "equip_skill_3", "equip_skill_4", "mutation", "talent_skill",
+    "voice",
 )
 
 

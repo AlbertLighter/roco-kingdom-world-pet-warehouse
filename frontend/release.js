@@ -376,6 +376,7 @@ function renderPetCard(pet, speciesName) {
             <div class="release-card-stats">
                 天赋: ${pet.total_talent}
                 ${pet.speed_talent > 0 ? `· 速度+${pet.speed_talent}` : ''}
+                · ${pet.voice === null || pet.voice === undefined || pet.voice === "" ? "嗓音 —" : `嗓音 ${Number(pet.voice) > 0 ? "+" : ""}${pet.voice}${Number(pet.voice) >= 90 ? " · 偏高" : (Number(pet.voice) < 0 || Number(pet.voice) <= 10 ? " · 偏低" : "")}`}
             </div>
             ${reasonsHtml}
         </div>

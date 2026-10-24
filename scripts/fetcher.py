@@ -47,6 +47,25 @@ def mark_absent_inactive(cursor, present: set[int]) -> int:
     return released
 
 
+
+def _detail_voice(detail: dict):
+    """Map HTTP detail voice-like keys if present; otherwise None (do not invent)."""
+    if not isinstance(detail, dict):
+        return None
+    for key in ("Voice", "PetVoice", "voice", "Pet_Vo_Pitch", "petVoice"):
+        if key in detail and detail[key] is not None and detail[key] != "":
+            try:
+                value = int(detail[key])
+            except (TypeError, ValueError):
+                return None
+            if -200 <= value <= 200:
+                return value
+            if value > 1000:
+                return -100
+            return None
+    return None
+
+
 def init_db(db_path: str | None = None):
     conn = sqlite3.connect(db_path or DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -107,6 +126,7 @@ def init_db(db_path: str | None = None):
         catch_ball INTEGER,
         height INTEGER,
         weight INTEGER,
+        voice INTEGER,
         FOREIGN KEY (base_id) REFERENCES pet_base_info (id)
     )
     """)
@@ -179,6 +199,11 @@ def init_db(db_path: str | None = None):
 
     try:
         cursor.execute("ALTER TABLE pet_instances ADD COLUMN talent_skill INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE pet_instances ADD COLUMN voice INTEGER")
     except sqlite3.OperationalError:
         pass
 
@@ -515,7 +540,8 @@ def run_sync(progress_callback=None):
                     medal = ?, catch_ball = ?, height = ?, weight = ?,
                     bloodline = ?, skill_dam_type = ?,
                     equip_skill_1 = ?, equip_skill_2 = ?, equip_skill_3 = ?, equip_skill_4 = ?,
-                    mutation = ?, talent_skill = ?
+                    mutation = ?, talent_skill = ?,
+                    voice = COALESCE(?, voice)
                 WHERE serial_num = ?
                 """, (
                     pet["PetBaseId"],
@@ -553,6 +579,7 @@ def run_sync(progress_callback=None):
                     detail.get("EquipSkill4", 0),
                     detail.get("PetMutation", 0),
                     detail.get("PetTalentSkill", 0),
+                    _detail_voice(detail),
                     sn
                 ))
                 t_conn.commit()
@@ -568,8 +595,8 @@ def run_sync(progress_callback=None):
                     is_active, gender, medal, catch_ball, height, weight,
                     bloodline, skill_dam_type,
                     equip_skill_1, equip_skill_2, equip_skill_3, equip_skill_4,
-                    mutation, talent_skill
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    mutation, talent_skill, voice
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     int(detail["SerialNum"]),
                     detail["PetBaseId"],
@@ -606,7 +633,8 @@ def run_sync(progress_callback=None):
                     detail.get("EquipSkill3", 0),
                     detail.get("EquipSkill4", 0),
                     detail.get("PetMutation", 0),
-                    detail.get("PetTalentSkill", 0)
+                    detail.get("PetTalentSkill", 0),
+                    _detail_voice(detail),
                 ))
                 t_conn.commit()
                 with detail_lock:

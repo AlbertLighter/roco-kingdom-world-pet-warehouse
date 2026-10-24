@@ -212,6 +212,20 @@ function renderHexagon(pet) {
 }
 
 // ---- 尺子 ----
+function formatVoiceLabel(voice) {
+    if (voice === null || voice === undefined || voice === "") {
+        return "嗓音 —";
+    }
+    const value = Number(voice);
+    if (Number.isNaN(value)) return "嗓音 —";
+    let hint = "";
+    // 数据多为 0~100，负值表示低音方向；不根据数值臆造勋章
+    if (value >= 90) hint = " · 偏高";
+    else if (value < 0 || value <= 10) hint = " · 偏低";
+    const sign = value > 0 ? "+" : "";
+    return `嗓音 ${sign}${value}${hint}`;
+}
+
 function renderRuler(label, value, min, max, divisor, unit) {
     if (!value || !min || !max) {
         const valStr = value ? (value / divisor).toFixed(2) + unit : '-';
@@ -398,6 +412,7 @@ function createPetCard(pet) {
             <div class="extra-info">
                 ${renderRuler('身高', pet.height, pet.base_height_low, pet.base_height_high, 100, 'm')}
                 ${renderRuler('体重', pet.weight, pet.base_weight_low, pet.base_weight_high, 1000, 'kg')}
+                <div title="Pet_Vo_Pitch / voice">${formatVoiceLabel(pet.voice)}</div>
                 <div>蛋组: ${(pet.base_egg_group_int ? escapeHtml(JSON.parse(pet.base_egg_group_int).join(', ')) : '-')}</div>
                 ${medals.length ? `<div title="${escapeHtml(pet.medal)}">🏅 ${escapeHtml(medals.join(', ').substring(0, 20))}${medals.join(', ').length > 20 ? '…' : ''}</div>` : '<div>🏅 -</div>'}
             </div>

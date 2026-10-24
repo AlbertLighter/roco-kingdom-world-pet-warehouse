@@ -185,6 +185,7 @@ const talentChecks = document.querySelectorAll('#talentChecks input');
 const useKingBall = document.getElementById('useKingBall');
 const kingBallAttr = document.getElementById('kingBallAttr');
 const breedBigSize = document.getElementById('breedBigSize');
+const breedHighVoice = document.getElementById('breedHighVoice');
 const recommendBtn = document.getElementById('recommendBtn');
 const recommendationResults = document.getElementById('recommendationResults');
 const STORAGE_KEY = 'breeding_config';
@@ -215,7 +216,8 @@ function getCurrentConfig() {
         talents: Array.from(talentChecks).filter(i => i.checked).map(i => i.value),
         useKingBall: useKingBall.checked,
         kingBallAttr: kingBallAttr.value,
-        breedBigSize: breedBigSize.checked
+        breedBigSize: breedBigSize.checked,
+        breedHighVoice: !!(breedHighVoice && breedHighVoice.checked)
     };
 }
 
@@ -277,6 +279,7 @@ function applyConfig(config) {
     useKingBall.checked = config.useKingBall;
     kingBallAttr.value = config.kingBallAttr;
     if (breedBigSize) breedBigSize.checked = config.breedBigSize || false;
+    if (breedHighVoice) breedHighVoice.checked = config.breedHighVoice || false;
     saveConfig();
 }
 
@@ -301,7 +304,7 @@ async function init() {
     });
     loadConfig();
     renderHistory();
-    [targetPetSelect, natureSelect, useKingBall, kingBallAttr, breedBigSize].forEach(el => { if (el) el.addEventListener('change', saveConfig); });
+    [targetPetSelect, natureSelect, useKingBall, kingBallAttr, breedBigSize, breedHighVoice].forEach(el => { if (el) el.addEventListener('change', saveConfig); });
     talentChecks.forEach(el => el.addEventListener('change', saveConfig));
     document.getElementById('clearHistoryBtn').addEventListener('click', () => { if (confirm('确定要清空所有历史配置吗？')) { localStorage.removeItem(HISTORY_KEY); renderHistory(); } });
 }
@@ -352,7 +355,8 @@ recommendBtn.addEventListener('click', async () => {
             desired_stats: config.talents,
             use_king_ball: config.useKingBall,
             king_ball_attr: config.kingBallAttr,
-            breed_big_size: config.breedBigSize
+            breed_big_size: config.breedBigSize,
+            breed_high_voice: config.breedHighVoice
         })
     });
     const data = await res.json();
@@ -399,6 +403,7 @@ function renderRecommendations(data, occupiedSerials) {
                 <div style="text-align:right;">
                     <div style="color:#27ae60;">综合评分: ${rec.score}</div>
                     ${rec.size_score ? `<div style="color:#d35400;font-size:0.8em;">体型评分: ${rec.size_score}</div>` : ''}
+                    ${rec.voice_score ? `<div style="color:#8e44ad;font-size:0.8em;">音高评分: ${rec.voice_score}</div>` : ''}
                     <div style="color:#7f8c8d;font-size:0.8em;">继承成功率: ${(rec.probability * 100).toFixed(2)}%</div>
                 </div>
             </div>
@@ -431,7 +436,8 @@ function renderRecommendations(data, occupiedSerials) {
                             talents: config.talents,
                             use_king_ball: config.useKingBall,
                             king_ball_attr: config.kingBallAttr,
-                            breed_big_size: config.breedBigSize
+                            breed_big_size: config.breedBigSize,
+                            breed_high_voice: config.breedHighVoice
                         })
                     });
                     if (res.ok) {
@@ -530,6 +536,7 @@ function renderSlots() {
             }
             // 恢复大体型
             if (breedBigSize) breedBigSize.checked = !!slot.breed_big_size;
+            if (breedHighVoice) breedHighVoice.checked = !!slot.breed_high_voice;
 
             saveConfig();
             slotsStatus.textContent = `已应用第 ${slot.slot_id} 组配置`;

@@ -18,6 +18,53 @@ function setBusy(busy) {
     });
 }
 
+
+let recordStatusTimer = null;
+
+function applyRecordStatus(status) {
+    const recordBtn = document.getElementById("recordBtn");
+    const statusEl = document.getElementById("recordStatus");
+    const running = !!(status && status.running);
+    if (recordBtn) {
+        recordBtn.dataset.recording = running ? "1" : "0";
+        recordBtn.textContent = running ? "停止记录" : "改道记录";
+        recordBtn.style.background = running ? "#c0392b" : "#b9770e";
+        recordBtn.disabled = false;
+    }
+    if (statusEl) {
+        if (running) {
+            const mode = status.mode || "?";
+            const started = status.started_at ? `，开始于 ${status.started_at}` : "";
+            const msg = status.message ? ` — ${status.message}` : "";
+            const saved = status.saved ? `，已记 ${status.saved}` : "";
+            statusEl.textContent = `记录状态：进行中（${mode}${started}${saved}）${msg}`;
+            statusEl.style.color = "#c0392b";
+        } else {
+            statusEl.textContent = "记录状态：空闲";
+            statusEl.style.color = "#7f8c8d";
+        }
+    }
+    if (running) {
+        if (!recordStatusTimer) {
+            recordStatusTimer = setInterval(() => { refreshRecordStatus(); }, 2000);
+        }
+    } else if (recordStatusTimer) {
+        clearInterval(recordStatusTimer);
+        recordStatusTimer = null;
+    }
+}
+
+async function refreshRecordStatus() {
+    try {
+        const res = await rocoFetch("/api/packets/record_status");
+        if (!res.ok) return;
+        const status = await res.json();
+        applyRecordStatus(status);
+    } catch (_err) {
+        /* ignore transient poll errors */
+    }
+}
+
 async function loadPackets() {
     const params = new URLSearchParams({
         page: String(page),
@@ -105,6 +152,7 @@ async function openPacket(id) {
         document.getElementById("downloadBtn").disabled = false;
     }
     loadPackets();
+refreshRecordStatus();
 }
 
 async function readSse(url, options) {
@@ -228,9 +276,7 @@ document.getElementById("recordBtn").addEventListener("click", async () => {
     } catch (error) {
         jobLog.textContent = error.message;
     }
-    recordBtn.dataset.recording = "0";
-    recordBtn.textContent = "改道记录";
-    recordBtn.style.background = "#b9770e";
+    await refreshRecordStatus();
     setBusy(false);
 });
 
