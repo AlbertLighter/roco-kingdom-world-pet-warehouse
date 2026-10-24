@@ -80,15 +80,18 @@ def _equipped_skills(pet: dict) -> list[int]:
 
 
 def coerce_voice(raw) -> int | None:
-    """Parse PetData.voice; oversized unsigned wraps become low pitch (-100)."""
+    """Parse PetData.voice; protobuf int64 负数常以 uint64 出现，先还原再入库。"""
     if raw is None or raw == "":
         return None
     try:
         value = int(raw)
     except (TypeError, ValueError):
         return None
+    if value >= 2**63:
+        value -= 2**64
     if -200 <= value <= 200:
         return value
+    # 仍异常偏大的按低音处理（与历史约定一致，不臆造精确音高）
     if value > 1000:
         return -100
     return None

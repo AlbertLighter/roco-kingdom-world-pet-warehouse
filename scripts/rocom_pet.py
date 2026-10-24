@@ -161,6 +161,8 @@ def _pet(blob: bytes) -> dict:
             pet["wear_medal_conf_id"] = value
         elif field_no == 82 and wire == 0:
             pet["speciality_id"] = value
+        elif field_no == 93 and wire == 0:
+            pet["voice"] = value
     if types:
         pet["skill_dam_type"] = types
     if skills:

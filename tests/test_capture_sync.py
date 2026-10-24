@@ -165,10 +165,25 @@ class CaptureSyncTests(unittest.TestCase):
         finally:
             conn.close()
 
-    def test_voice_unsigned_wrap_becomes_low(self):
-        record = pet_record(sample_pet(voice=18446744073709552000))
-        self.assertEqual(record["voice"], -100)
+    def test_voice_unsigned_wrap_becomes_signed(self):
+        # protobuf int64 负数以 uint64 出现时应还原，而不是一律 -100
+        record = pet_record(sample_pet(voice=2**64 - 36))
+        self.assertEqual(record["voice"], -36)
+        # 仍异常偏大的正数按低音约定
+        record2 = pet_record(sample_pet(voice=5000))
+        self.assertEqual(record2["voice"], -100)
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CoerceVoiceTests(unittest.TestCase):
+    def test_coerce_voice_signed_uint64(self):
+        from scripts.capture_sync import coerce_voice
+
+        self.assertEqual(coerce_voice(53), 53)
+        self.assertEqual(coerce_voice(0), 0)
+        self.assertEqual(coerce_voice(2**64 - 36), -36)
+        self.assertIsNone(coerce_voice(None))
+

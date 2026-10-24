@@ -213,6 +213,7 @@ function renderHexagon(pet) {
 
 // ---- 尺子 ----
 function formatVoiceLabel(voice) {
+    // 仅缺省显示 —；voice=0 是有效音高，必须显示 0
     if (voice === null || voice === undefined || voice === "") {
         return "嗓音 —";
     }
