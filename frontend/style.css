@@ -1062,10 +1062,36 @@ main { padding: clamp(16px, 2.5vw, 32px); }
 }
 
 .pet-card-empty {
-    min-height: 148px;
-    border: 1px dashed #d5dbe6;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 220px;
+    padding: 16px 12px;
+    border: 1px dashed #c5cedd;
     border-radius: var(--radius-md, 15px);
-    background: rgba(255, 255, 255, 0.35);
+    background: rgba(248, 250, 253, 0.72);
+    color: #8a94a6;
+    text-align: center;
+    box-sizing: border-box;
+}
+
+.pet-card-empty-inner {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    align-items: center;
+}
+
+.pet-card-empty-label {
+    font-size: 0.95em;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    color: #6b7585;
+}
+
+.pet-card-empty-sub {
+    font-size: 0.78em;
+    color: #9aa3b2;
 }
 
 .pet-card {

@@ -271,6 +271,19 @@ function getTypeNames(idsStr) {
 }
 
 // ---- 解析奖牌 ----
+function formatEggGroup(raw) {
+    if (raw == null || raw === '') return '-';
+    try {
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        if (Array.isArray(parsed)) {
+            return parsed.length ? escapeHtml(parsed.join(', ')) : '-';
+        }
+        return escapeHtml(String(parsed));
+    } catch (e) {
+        return '-';
+    }
+}
+
 function parseMedals(medalStr) {
     if (!medalStr) return [];
     return medalStr.split('/').filter(Boolean).map(id => {
@@ -326,6 +339,9 @@ function renderStatsTable(pet) {
 
 // ---- 渲染单张宠物卡片 ----
 function createPetCard(pet) {
+    if (!pet || pet.serial_num == null) {
+        return '';
+    }
     const genderClass = ['', 'male', 'female'][pet.gender] || 'unknown';
     const genderLabel = ['', '♂', '♀'][pet.gender] || '';
     const genderIconClass = ['', 'gender-male', 'gender-female'][pet.gender] || '';
@@ -414,7 +430,7 @@ function createPetCard(pet) {
                 ${renderRuler('身高', pet.height, pet.base_height_low, pet.base_height_high, 100, 'm')}
                 ${renderRuler('体重', pet.weight, pet.base_weight_low, pet.base_weight_high, 1000, 'kg')}
                 <div title="Pet_Vo_Pitch / voice">${formatVoiceLabel(pet.voice)}</div>
-                <div>蛋组: ${(pet.base_egg_group_int ? escapeHtml(JSON.parse(pet.base_egg_group_int).join(', ')) : '-')}</div>
+                <div>蛋组: ${formatEggGroup(pet.base_egg_group_int)}</div>
                 ${medals.length ? `<div title="${escapeHtml(pet.medal)}">🏅 ${escapeHtml(medals.join(', ').substring(0, 20))}${medals.join(', ').length > 20 ? '…' : ''}</div>` : '<div>🏅 -</div>'}
             </div>
 
@@ -492,18 +508,40 @@ async function renderWorldTeams() {
     }
 }
 
+function createEmptySlotCard(slotIndex) {
+    const empty = document.createElement('div');
+    empty.className = 'pet-card-empty';
+    empty.setAttribute('role', 'status');
+    empty.dataset.slot = String(slotIndex);
+    empty.title = '空位 · 无精灵';
+    empty.innerHTML = '<div class="pet-card-empty-inner">'
+        + '<span class="pet-card-empty-label">空位</span>'
+        + '<span class="pet-card-empty-sub">无精灵 · 第' + (slotIndex + 1) + '格</span>'
+        + '</div>';
+    return empty;
+}
+
 function renderPets(pets, boxMode) {
     petListEl.innerHTML = '';
-    (pets || []).forEach(pet => {
+    (pets || []).forEach((pet, index) => {
         if (!pet) {
-            const empty = document.createElement('div');
-            empty.className = 'pet-card-empty';
-            petListEl.appendChild(empty);
+            petListEl.appendChild(createEmptySlotCard(index));
             return;
         }
-        const card = document.createElement('div');
-        card.innerHTML = createPetCard(pet);
-        const root = card.firstElementChild;
+        let root = null;
+        try {
+            const card = document.createElement('div');
+            card.innerHTML = createPetCard(pet);
+            root = card.firstElementChild;
+        } catch (e) {
+            console.warn('渲染精灵卡片失败，已显示空位占位:', pet && pet.serial_num, e);
+            petListEl.appendChild(createEmptySlotCard(index));
+            return;
+        }
+        if (!root) {
+            petListEl.appendChild(createEmptySlotCard(index));
+            return;
+        }
         const nameNode = root.querySelector('.pet-name');
         if (nameNode) nameNode.addEventListener('click', () => copyPetName(pet.name || ''));
         const speciesBtn = root.querySelector('.species-config-btn');

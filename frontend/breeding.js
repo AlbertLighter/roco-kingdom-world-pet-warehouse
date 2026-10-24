@@ -121,7 +121,23 @@ function getTalentSkillName(id) {
     return ts ? ts.name : null;
 }
 
+function formatEggGroup(raw) {
+    if (raw == null || raw === '') return '-';
+    try {
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        if (Array.isArray(parsed)) {
+            return parsed.length ? escapeHtml(parsed.join(', ')) : '-';
+        }
+        return escapeHtml(String(parsed));
+    } catch (e) {
+        return '-';
+    }
+}
+
 function createPetCard(pet) {
+    if (!pet || pet.serial_num == null) {
+        return '';
+    }
     const genderClass = ['', 'male', 'female'][pet.gender] || 'unknown';
     const genderLabel = ['', '♂', '♀'][pet.gender] || '';
     const genderIconClass = ['', 'gender-male', 'gender-female'][pet.gender] || '';
@@ -134,7 +150,7 @@ function createPetCard(pet) {
     const escapedNatureName = escapeHtml(pet.nature_name || '未知');
     const escapedNaturePlus = escapeHtml(pet.nature_plus || '-');
     const escapedNatureMinus = escapeHtml(pet.nature_minus || '-');
-    const eggStr = pet.base_egg_group_int ? escapeHtml(JSON.parse(pet.base_egg_group_int).join(', ')) : '-';
+    const eggStr = formatEggGroup(pet.base_egg_group_int);
     const medalStr = medals.length ? escapeHtml(medals.join(', ').substring(0, 20)) + (medals.join(', ').length > 20 ? '…' : '') : '-';
 
     return `
