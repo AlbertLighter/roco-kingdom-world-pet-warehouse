@@ -480,6 +480,26 @@ function syncWorldTeamButton() {
     button.textContent = shown ? '在仓库中隐藏' : '在仓库中显示';
 }
 
+function isWorldSidebarCollapsed() {
+    return localStorage.getItem('warehouse_worldSidebarCollapsed') === 'true';
+}
+
+function syncWorldSidebarCollapsed() {
+    const sidebar = document.getElementById('worldSidebar');
+    const button = document.getElementById('collapseWorldSidebarBtn');
+    if (!sidebar || !button) return;
+    const collapsed = isWorldSidebarCollapsed();
+    sidebar.classList.toggle('is-collapsed', collapsed);
+    button.textContent = collapsed ? '展开' : '收起';
+    button.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    button.title = collapsed ? '展开侧边栏' : '收起侧边栏';
+}
+
+function setWorldSidebarCollapsed(collapsed) {
+    localStorage.setItem('warehouse_worldSidebarCollapsed', collapsed ? 'true' : 'false');
+    syncWorldSidebarCollapsed();
+}
+
 async function renderWorldTeams() {
     const sidebar = document.getElementById('worldSidebar');
     const box = document.getElementById('worldTeams');
@@ -495,6 +515,7 @@ async function renderWorldTeams() {
             return;
         }
         sidebar.hidden = false;
+        syncWorldSidebarCollapsed();
         box.innerHTML = teams.map(team => `
             <div class="world-team">
                 <h3>队伍 ${team.team}</h3>
@@ -633,6 +654,9 @@ document.getElementById('toggleWorldTeamBtn').addEventListener('click', () => {
     localStorage.setItem('warehouse_showWorldTeam', shown ? 'false' : 'true');
     currentPage = 1;
     fetchPets();
+});
+document.getElementById('collapseWorldSidebarBtn').addEventListener('click', () => {
+    setWorldSidebarCollapsed(!isWorldSidebarCollapsed());
 });
 
 // ---- 同步逻辑 (不变) ----
