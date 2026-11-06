@@ -1,19 +1,24 @@
 import asyncio
+import json
 import os
 import unittest
 from unittest import mock
 
 import uvicorn
+from fastapi import HTTPException
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 import backend.main as app
 from backend.runtime_config import (
     ServerConfigError,
+    capture_enabled,
+    divert_recording_allowed,
     local_origins,
     public_bind_warning,
     resolve_bind,
     resolve_cors_origins,
+    sync_token,
 )
 
 
@@ -86,6 +91,22 @@ class CorsConfigTests(unittest.TestCase):
         self.assertNotIn("http://0.0.0.0:8000", origins)
 
 
+class CaptureFlagTests(unittest.TestCase):
+    def test_capture_defaults_off_away_from_windows(self):
+        self.assertFalse(capture_enabled({}, platform_name="linux"))
+        self.assertTrue(capture_enabled({}, platform_name="win32"))
+        self.assertFalse(capture_enabled({"ROCO_ENABLE_CAPTURE": "0"}, platform_name="win32"))
+        self.assertTrue(capture_enabled({"ROCO_ENABLE_CAPTURE": "yes"}, platform_name="linux"))
+        self.assertFalse(capture_enabled({"ROCO_ENABLE_CAPTURE": "maybe"}, platform_name="win32"))
+        self.assertEqual(sync_token({}), "")
+        self.assertEqual(sync_token({"ROCO_SYNC_TOKEN": "  abc  "}), "abc")
+
+    def test_divert_stays_windows_only(self):
+        self.assertFalse(divert_recording_allowed({"ROCO_ENABLE_CAPTURE": "1"}, platform_name="linux"))
+        self.assertFalse(divert_recording_allowed({"ROCO_ENABLE_CAPTURE": "0"}, platform_name="win32"))
+        self.assertTrue(divert_recording_allowed({}, platform_name="win32"))
+
+
 class AppWiringTests(unittest.TestCase):
     def test_frontend_directory_is_the_project_frontend(self):
         frontend = app._FRONTEND_DIR
@@ -119,12 +140,57 @@ class AppWiringTests(unittest.TestCase):
         reading = asyncio.run(app.require_local_token(_request("GET"), _allow))
         self.assertEqual(reading.status_code, 200)
 
+    def test_sync_token_only_opens_the_warehouse_import(self):
+        headers = {"x-roco-token": "sync-secret"}
+        with mock.patch.dict(os.environ, {"ROCO_SYNC_TOKEN": "sync-secret"}, clear=False):
+            denied = asyncio.run(app.require_local_token(_request("POST", headers), _allow))
+            allowed = asyncio.run(
+                app.require_local_token(_request("POST", headers, "/api/sync/warehouse"), _allow)
+            )
+            missing = asyncio.run(app.require_local_token(_request("POST", path="/api/sync/warehouse"), _allow))
+        self.assertEqual(denied.status_code, 401)
+        self.assertEqual(json.loads(denied.body)["detail"], "需要本机令牌")
+        self.assertEqual(allowed.status_code, 200)
+        self.assertEqual(missing.status_code, 401)
+        self.assertIn("同步令牌", json.loads(missing.body)["detail"])
 
-def _request(method: str, headers: dict | None = None) -> Request:
+    def test_record_and_stop_are_forbidden_when_capture_is_disabled(self):
+        with mock.patch("backend.main.capture_enabled", return_value=False):
+            with self.assertRaises(HTTPException) as recorded:
+                app.api_record_packets({"mode": "divert"})
+            with self.assertRaises(HTTPException) as stopped:
+                app.api_stop_packets()
+        self.assertEqual(recorded.exception.status_code, 403)
+        self.assertIn("WinDivert", recorded.exception.detail)
+        self.assertEqual(stopped.exception.status_code, 403)
+
+    def test_divert_stays_forbidden_when_capture_is_on_but_not_windows(self):
+        with (
+            mock.patch("backend.main.capture_enabled", return_value=True),
+            mock.patch("backend.main.divert_recording_allowed", return_value=False),
+        ):
+            with self.assertRaises(HTTPException) as caught:
+                app.api_record_packets({"mode": "divert"})
+        self.assertEqual(caught.exception.status_code, 403)
+        self.assertIn("Windows", caught.exception.detail)
+
+    def test_windows_divert_still_reaches_the_recorder(self):
+        with (
+            mock.patch("backend.main.capture_enabled", return_value=True),
+            mock.patch("backend.main.divert_recording_allowed", return_value=True),
+            mock.patch("backend.main._run_locked", return_value=None) as run,
+        ):
+            with self.assertRaises(HTTPException) as caught:
+                app.api_record_packets({"mode": "divert"})
+        self.assertEqual(caught.exception.status_code, 409)
+        run.assert_called_once()
+
+
+def _request(method: str, headers: dict | None = None, path: str = "/api/update_gender") -> Request:
     raw = []
     for key, value in (headers or {}).items():
         raw.append((key.lower().encode("latin-1"), value.encode("latin-1")))
-    scope = {"type": "http", "http_version": "1.1", "method": method, "path": "/api/update_gender", "headers": raw}
+    scope = {"type": "http", "http_version": "1.1", "method": method, "path": path, "headers": raw}
     return Request(scope)
 
 

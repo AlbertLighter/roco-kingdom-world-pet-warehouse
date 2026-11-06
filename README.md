@@ -3,14 +3,14 @@
 ![Python](https://img.shields.io/badge/python-3.12%2B-green)
 ![FastAPI](https://img.shields.io/badge/framework-FastAPI-009688)
 
-本地工具，用来看自己的精灵仓库、挑繁育父母、算放生建议。数据在本机 SQLite 里。
+Windows 本机负责改道抓包。收齐仓库分页后写入本机 SQLite；配置了云端地址时，同一份快照会推到服务器。云端用来看仓库、挑繁育父母、算放生建议，也可以用令牌做 HTTP 同步。云端不跑 WinDivert，也不要靠拷贝 `warehouse.db` 同步。
 
 ## 核心功能
 
 - **仓库**：按盒子 6×5 查看，空格子留在原位。可标大世界队伍、隐藏异色/炫彩。
 - **繁育**：按蛋组和遗传权重推荐父母，可偏向体型和指定性格。
 - **放生**：按进化家族保留异色/炫彩、慈悲为怀、同乘、爱分享、疾行和评分靠前的个体。
-- **抓包记录**：管理员身份下把本机游戏的 8195 连接改道到本地观察，解密后写入仓库。换盒、进化、孵蛋、捕捉会在当前会话里更新；登录盒子快照认不全时，不会清掉没看到的格子。
+- **本机抓包**：管理员身份下把 Windows 上游戏的 8195 连接改道到本地观察，解密后写入仓库。收齐分页后，若配置了 `ROCO_CLOUD_URL` 和 `ROCO_SYNC_TOKEN`，会把这份快照推到云端。换盒、进化、孵蛋、捕捉会在当前会话里更新；登录盒子快照认不全时，不会清掉没看到的格子。非 Windows 默认没有抓包入口。
 - **同步精灵**：用 `.env` 里的令牌走游戏 HTTP 接口。不写盒子位置。大世界队伍不会因为不在这份名单里被标成已放生。
 
 ## 📸 界面预览 (Screenshots)
@@ -66,11 +66,20 @@ Windows 上可以直接运行项目根目录的 `start.bat`。它会申请管理
 uv run python backend/main.py
 ```
 
-浏览器打开 [http://localhost:8000](http://localhost:8000)。四个页面是仓库、繁育中心、放生推荐、抓包记录。
+浏览器打开 [http://localhost:8000](http://localhost:8000)，看仓库、繁育中心和放生推荐。抓包不必打开网页：在管理员权限的终端执行 `uv run python scripts/capture_divert.py`，再进入游戏。`start.bat` 仍会申请管理员权限并启动本机服务。Windows 上如果仍想在页面里点「改道记录」，抓包入口会留着；非 Windows 默认不显示。
 
 不设置 `ROCO_HOST` / `ROCO_PORT`（或 `HOST` / `PORT`）时，仍是 `127.0.0.1:8000`。静态页从项目里的 `frontend/` 读取，不依赖当前工作目录，也不依赖 Windows 路径。
 
-改了抓包、解密或前端代码后，需要重启这个进程。抓包记录要先点「改道记录」，再进入游戏。
+改了抓包、解密或前端代码后，需要重启这个进程。
+
+本机要把仓库推到云端时，在 `.env` 增加（令牌和云端相同）：
+
+```bash
+ROCO_CLOUD_URL=https://warehouse.example.com
+ROCO_SYNC_TOKEN=一长串随机文本
+```
+
+收齐分页后会 `POST /api/sync/warehouse`。失败时日志里有原因，快照在 `captures/warehouse_snapshot.json`，执行 `uv run python scripts/warehouse_push.py` 可再推一次。不写 `ROCO_CLOUD_URL` 则只留在本机。
 
 ### OCR 自动补全性别
 
@@ -82,7 +91,9 @@ uv run python backend/main.py
 ## 📂 项目结构
 
 - `backend/main.py`：HTTP 接口。
-- `frontend/`：仓库、繁育、放生、抓包四个页面。
+- `frontend/`：仓库、繁育、放生。抓包页只在启用抓包时从导航进入。
+- `scripts/capture_divert.py`：Windows 本机改道抓包，收齐后按环境变量推送。
+- `scripts/warehouse_push.py`：重试上一次完整仓库快照的推送。
 - `scripts/`：HTTP 同步、改道解密、盒子与队伍、放生点击、对照窗。
 - `docs/`：字段、繁育和放生规则、接口说明。
 - `deploy/`：Ubuntu 的 systemd 单元，以及可选的 nginx 反代。
@@ -90,7 +101,7 @@ uv run python backend/main.py
 
 ## 部署到 Ubuntu
 
-远程 Linux 用来浏览仓库、繁育和放生，以及用 `.env` 里的令牌做 HTTP 同步。WinDivert 改道抓包、点击放生和盒子对照窗是 Windows 功能，服务器上不要执行 `uv sync --extra capture`。本机 Windows 继续用 `start.bat`，不用改监听地址。
+远程 Linux 用来浏览仓库、繁育和放生，以及用 `.env` 里的令牌做 HTTP 同步。WinDivert 改道抓包、点击放生和盒子对照窗是 Windows 功能，服务器上不要执行 `uv sync --extra capture`，也不要启动改道。本机 Windows 继续用 `start.bat`，不用改监听地址。仓库数据由本机推送，不要把 `warehouse.db` scp 到服务器。
 
 下面假设代码放在 `/opt/roco-kingdom-world-pet-warehouse`。腾讯云上的 docker 和 nginx 可以继续留给别的服务；这个仓库用 systemd 和 `uv` 创建的虚拟环境即可。
 
@@ -115,7 +126,7 @@ uv sync
 cp .env.example .env
 ```
 
-编辑 `.env`，不要提交它。游戏令牌只给「同步精灵」用；已有 `warehouse.db` 时可以把它拷到项目根目录再浏览。监听示例：
+编辑 `.env`，不要提交它。游戏令牌只给「同步精灵」用。仓库名单由本机推上来，不需要拷贝数据库。监听示例：
 
 ```bash
 # 推荐：进程只听本机，由 nginx 对外
@@ -127,6 +138,13 @@ ROCO_PORT=8000
 
 # 页面和接口不同源时才需要。逗号分隔，不要写 *
 # ROCO_CORS_ORIGINS=https://warehouse.example.com
+
+# 和本机 Windows 的 ROCO_SYNC_TOKEN 相同。请求头用 X-Roco-Token。
+# 也可以用启动后写入 captures/api.token 的那把，但每次重启都会变。
+ROCO_SYNC_TOKEN=
+
+# 非 Windows 默认关闭改道。不要在云端打开这个开关去启动 WinDivert。
+# ROCO_ENABLE_CAPTURE=0
 ```
 
 `ROCO_HOST` / `ROCO_PORT` 优先于 `HOST` / `PORT`。都不写时仍是 `127.0.0.1:8000`。
@@ -164,7 +182,16 @@ sudo nginx -t && sudo systemctl reload nginx
 curl -fsS http://127.0.0.1:8000/ | head
 ```
 
-浏览器打开反代域名，或安全组放行后的 `http://服务器:8000`。抓包记录页可以打开，但不能在 Linux 上做 WinDivert 改道。
+浏览器打开反代域名，或安全组放行后的 `http://服务器:8000`。导航里没有抓包。`POST /api/packets/record` 和 `POST /api/packets/stop` 返回 403。
+
+本机收齐分页后会向 `ROCO_CLOUD_URL/api/sync/warehouse` 提交快照。正文是 JSON 对象：`complete`（默认 true）和 `pets`。每一项用仓库列，和 `pet_record` 相同，也可以直接放带 `gid` 的 PetData。`complete` 为 true 时，名单里没有、且库中 `world_team` 为空的在库精灵会标成已放生；空数组不会把整个库标掉。字段表见 [`docs/api_documentation.md`](docs/api_documentation.md)。
+
+```bash
+curl -fsS -X POST http://127.0.0.1:8000/api/sync/warehouse \
+  -H "Content-Type: application/json" \
+  -H "X-Roco-Token: $ROCO_SYNC_TOKEN" \
+  -d '{"complete":true,"pets":[{"serial_num":1,"base_id":3005,"name":"示例","level":1}]}'
+```
 
 ## 🙏 鸣谢 (Acknowledgments)
 

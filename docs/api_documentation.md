@@ -202,13 +202,75 @@
 | `/api/release_click/run` | POST | 在游戏窗口里点击，SSE 进度 |
 | `/api/release_click/stop` | POST | 停止点击 |
 | `/api/packets` | GET、DELETE | 解密后的消息列表；DELETE 清空 |
-| `/api/packets/record` | POST | `{ "mode": "divert" }`，开始改道记录 |
-| `/api/packets/stop` | POST | 停止记录 |
+| `/api/packets/record` | POST | `{ "mode": "divert" }`，开始改道记录。未启用抓包或非 Windows 的 divert 返回 403 |
+| `/api/packets/stop` | POST | 停止记录。未启用抓包时返回 403 |
+| `/api/sync/warehouse` | POST | 导入完整仓库快照。见下文 |
+| `/api/runtime` | GET | `{ "capture_enabled": false }`，页面用来隐藏抓包入口 |
 | `/api/packets/{id}` | GET | 单条消息 |
 | `/api/packets/{id}/parse` | POST | 解析 |
 | `/api/packets/{id}/apply` | POST | 把这条精灵列表写入仓库 |
 
 放生规则见 [`放生推荐算法.md`](放生推荐算法.md)。点击放生不向游戏连接发送放生请求。
+
+### 导入仓库快照
+
+`POST /api/sync/warehouse`
+
+请求头 `X-Roco-Token`：启动时写入的 `captures/api.token`，或环境变量 `ROCO_SYNC_TOKEN`。两条路都能过。其他修改接口只认 `api.token`。
+
+```json
+{
+  "complete": true,
+  "pets": [
+    {
+      "serial_num": 42,
+      "base_id": 3005,
+      "name": "小蓝灵",
+      "level": 60,
+      "nature": 11,
+      "talent_rank": 4,
+      "hp": 310,
+      "adAttack": 80,
+      "apAttack": 70,
+      "adDefense": 60,
+      "apDefense": 50,
+      "speed": 40,
+      "hp_race": 125,
+      "adAttack_race": 40,
+      "apAttack_race": 30,
+      "adDefense_race": 20,
+      "apDefense_race": 10,
+      "speed_race": 9,
+      "hp_talent": 32,
+      "adAttack_talent": 1,
+      "apAttack_talent": 2,
+      "adDefense_talent": 3,
+      "apDefense_talent": 4,
+      "speed_talent": 5,
+      "gender": 2,
+      "medal": "",
+      "catch_ball": 100002,
+      "height": 116,
+      "weight": 78900,
+      "bloodline": 19,
+      "skill_dam_type": "[5]",
+      "equip_skill_1": 222,
+      "equip_skill_2": 111,
+      "equip_skill_3": 0,
+      "equip_skill_4": 0,
+      "mutation": 0,
+      "talent_skill": 7,
+      "voice": 87
+    }
+  ]
+}
+```
+
+`pets` 每一项和 `scripts/capture_sync.py` 的 `pet_record` 列相同。缺的数值按 0，`voice` 可以是 null。也可以直接放游戏 PetData（用 `gid`，没有 `serial_num` 时会先走 `pet_record`）。多出来的字段忽略。同一只出现多次时保留最后一条。
+
+`complete` 省略时当作 true。为 true 时，名单之外、且 `world_team` 为空的在库精灵标成已放生，和大世界队伍不在背包分页里的现有规则一样。`complete: false` 只更新名单里的精灵。`pets` 为空时不标记放生。快照不写 `box_id` 和 `world_team`；云端库里已经有的队伍标记会留着。
+
+返回和写入仓库一样：`new`、`updated`、`total`、`released`、`complete`。
 
 ## 四、配置映射文件
 

@@ -108,7 +108,7 @@ async function loadPackets() {
         bodyEl.appendChild(tr);
     });
     if (!data.data || !data.data.length) {
-        bodyEl.innerHTML = `<tr><td colspan="4">还没有记录。可以载入 data 导出，或改道记录。</td></tr>`;
+        bodyEl.innerHTML = `<tr><td colspan="4">还没有记录。</td></tr>`;
     }
 }
 
@@ -268,9 +268,13 @@ document.getElementById("recordBtn").addEventListener("click", async () => {
             body: JSON.stringify({ mode: "divert" }),
         });
         const sync = result.sync;
-        jobLog.textContent = sync
+        let text = sync
             ? `记录结束，共 ${result.saved || 0} 条。精灵已同步：新增 ${sync.new || 0}，更新 ${sync.updated || 0}，共 ${sync.total || 0}`
             : `记录结束，共 ${result.saved || 0} 条`;
+        const push = sync && sync.push;
+        if (push && push.ok) text += "。已推到云端";
+        else if (push && !push.skipped && !push.ok) text += "。推送云端失败，可执行 python scripts/warehouse_push.py 重试";
+        jobLog.textContent = text;
         page = 1;
         await loadPackets();
     } catch (error) {
