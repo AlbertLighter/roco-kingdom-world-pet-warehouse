@@ -47,12 +47,15 @@ roco-kingdom-world-pet-warehouse/
 │   ├── game_release_click.py  # 只点击本机游戏窗口
 │   └── box_overlay.py         # 置顶对照窗
 ├── docs/                      # 字段、算法、接口
+├── deploy/                    # Ubuntu systemd 单元和可选 nginx 反代
 ├── roco_kingdom_world_conf/   # 游戏配置子模块
 ├── warehouse.db               # 运行生成，已 gitignore
 ├── .env.example
 ├── pyproject.toml
 └── uv.lock
 ```
+
+默认监听 `127.0.0.1:8000`。`ROCO_HOST` / `ROCO_PORT`（或 `HOST` / `PORT`）改绑定地址，`ROCO_CORS_ORIGINS` 追加跨域来源。WinDivert 改道仍只在 Windows 上使用。
 
 ---
 
@@ -126,3 +129,4 @@ HTTP 同步不写 `box_id`。盒子来自登录包和游戏内换盒。
 | 认证 | .env 手动配置 | 游戏 API 使用 QQ 直登 fd_token |
 | 配置数据 | Git 子模块 | 只读引用，独立更新 |
 | 包管理 | uv | 快速，锁定文件 |
+| 部署 | systemd + 本机监听 | 远程浏览和 HTTP 同步；抓包不放到 Linux |

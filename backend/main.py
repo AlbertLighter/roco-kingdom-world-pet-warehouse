@@ -16,7 +16,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 # Add project root to path so we can import scripts
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _PROJECT_ROOT)
 
 # ---- 日志配置 ----
 _LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "logs")
@@ -298,7 +299,6 @@ def init_db():
 
 
 API_TOKEN = secrets.token_urlsafe(32)
-_LOCAL_ORIGINS = ["http://127.0.0.1:8000", "http://localhost:8000"]
 
 
 @asynccontextmanager
@@ -470,9 +470,26 @@ def _run_locked(name: str, worker):
     threading.Thread(target=run, daemon=True).start()
     return progress_queue
 
+def _load_server_settings():
+    """读取项目根目录的 .env，再读进程环境。ROCO_HOST / ROCO_PORT 优先于 HOST / PORT。"""
+    from dotenv import load_dotenv
+
+    from backend.runtime_config import public_bind_warning, resolve_bind, resolve_cors_origins
+
+    load_dotenv(os.path.join(_PROJECT_ROOT, ".env"))
+    host, port = resolve_bind()
+    origins, warnings = resolve_cors_origins(host, port)
+    warning = public_bind_warning(host)
+    if warning:
+        warnings.append(warning)
+    return host, port, origins, warnings
+
+
+BIND_HOST, BIND_PORT, CORS_ORIGINS, SERVER_WARNINGS = _load_server_settings()
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_LOCAL_ORIGINS,
+    allow_origins=CORS_ORIGINS,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "X-Roco-Token"],
 )
@@ -2727,9 +2744,22 @@ def api_record_packets(payload: dict | None = Body(default=None)):
     return _sse(progress_queue)
 
 
-_FRONTEND_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend"))
+_FRONTEND_DIR = os.path.join(_PROJECT_ROOT, "frontend")
 app.mount("/", StaticFiles(directory=_FRONTEND_DIR, html=True), name="frontend")
 
-if __name__ == "__main__":
+
+def main() -> None:
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+
+    from backend.runtime_config import local_origins
+
+    extras = [item for item in CORS_ORIGINS if item not in local_origins(BIND_PORT)]
+    if extras:
+        print("已允许的跨域来源: " + ", ".join(extras), flush=True)
+    for warning in SERVER_WARNINGS:
+        print(warning, flush=True)
+    uvicorn.run(app, host=BIND_HOST, port=BIND_PORT)
+
+
+if __name__ == "__main__":
+    main()

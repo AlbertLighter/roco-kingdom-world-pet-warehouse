@@ -30,7 +30,7 @@
 | HTTP 同步 | `uv run python scripts/fetcher.py` |
 | 更新子模块 | `./scripts/sync_conf.sh` |
 
-Windows 用 `start.bat`（纯 ASCII、CRLF，会申请管理员权限）。服务只监听 127.0.0.1。
+Windows 用 `start.bat`（纯 ASCII、CRLF，会申请管理员权限）。默认只监听 127.0.0.1:8000。`ROCO_HOST` / `ROCO_PORT`（或 `HOST` / `PORT`）可改绑定；`ROCO_CORS_ORIGINS` 追加跨域来源，不接受 `*`。Ubuntu 部署见 README 和 `deploy/`。
 
 ## 约定
 
@@ -44,4 +44,4 @@ Windows 用 `start.bat`（纯 ASCII、CRLF，会申请管理员权限）。服�
 
 - `warehouse.db`、`captures/`、`logs/` 都在 `.gitignore`。
 - 解密消息在 `captures/packets.db`，会话密钥在 `captures/keys/latest.key`。
-- 服务地址是 http://localhost:8000 。
+- 默认服务地址是 http://127.0.0.1:8000 。修改接口仍要 `captures/api.token`，不要为了远程部署放开这个校验。

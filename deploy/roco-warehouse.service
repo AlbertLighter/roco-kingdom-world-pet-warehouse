@@ -1,0 +1,22 @@
+# 洛克王国宠物仓库。复制到 /etc/systemd/system/ 前先改路径和运行用户。
+# 进程默认只听 127.0.0.1。要对网卡开放时，在 .env 里设置 ROCO_HOST=0.0.0.0。
+# 不要用 root 跑。User/Group 改成实际部署账号。
+
+[Unit]
+Description=洛克王国宠物仓库
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/roco-kingdom-world-pet-warehouse
+EnvironmentFile=-/opt/roco-kingdom-world-pet-warehouse/.env
+ExecStart=/opt/roco-kingdom-world-pet-warehouse/.venv/bin/python backend/main.py
+Restart=on-failure
+RestartSec=3
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Install]
+WantedBy=multi-user.target
