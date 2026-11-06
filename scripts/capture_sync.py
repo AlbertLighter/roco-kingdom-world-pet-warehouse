@@ -360,6 +360,89 @@ def upsert_pets(records: list[dict], *, db_path: str | None = None, mark_missing
     }
 
 
+class WarehouseSnapshotError(ValueError):
+    """快照正文无法写入仓库。"""
+
+
+def _as_complete(value, default: bool = True) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return bool(value)
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"1", "true", "yes", "on"}:
+            return True
+        if text in {"0", "false", "no", "off"}:
+            return False
+    raise WarehouseSnapshotError("complete 必须是布尔值")
+
+
+def _snapshot_record(item: dict) -> dict | None:
+    """收成 pet_record 的列。已经是仓库列时按列规范化；游戏 PetData 则走 pet_record。"""
+    if "serial_num" not in item and item.get("gid") is not None:
+        return pet_record(item)
+    if item.get("serial_num") is None:
+        return None
+    record: dict = {}
+    for name in _COLUMNS:
+        value = item.get(name)
+        if name == "skill_dam_type":
+            if value is None or value == "":
+                value = "[]"
+            elif isinstance(value, list):
+                value = json.dumps([int(part) for part in value if part is not None], ensure_ascii=False)
+            else:
+                value = str(value)
+        elif name == "name":
+            value = "" if value is None else str(value)
+        elif name == "medal":
+            value = "" if not value else str(value)
+        elif name == "voice":
+            value = None if value is None or value == "" else coerce_voice(value)
+        else:
+            value = int(value or 0)
+        record[name] = value
+    record["serial_num"] = int(item["serial_num"])
+    return record
+
+
+def normalize_snapshot_pets(pets: list) -> list[dict]:
+    if not isinstance(pets, list):
+        raise WarehouseSnapshotError("pets 必须是数组")
+    ordered: dict[int, dict] = {}
+    for index, item in enumerate(pets, start=1):
+        if not isinstance(item, dict):
+            raise WarehouseSnapshotError(f"第 {index} 条精灵必须是对象")
+        try:
+            record = _snapshot_record(item)
+        except (TypeError, ValueError) as exc:
+            raise WarehouseSnapshotError(f"第 {index} 条精灵无法解析：{exc}") from exc
+        if record is None:
+            raise WarehouseSnapshotError(f"第 {index} 条精灵缺少 serial_num 或 gid")
+        ordered[record["serial_num"]] = record
+    return list(ordered.values())
+
+
+def import_warehouse_snapshot(payload: dict, *, db_path: str | None = None, progress=None) -> dict:
+    """写入一份仓库快照。
+
+    ``complete`` 默认为真：和改道收齐分页一样调用 ``mark_absent_inactive``。
+    名单里没有、且库里 ``world_team`` 为空的在库精灵标成已放生。
+    空的 ``pets`` 沿用 ``upsert_pets``，不会把整个库标掉。
+    """
+    if not isinstance(payload, dict):
+        raise WarehouseSnapshotError("请求体必须是对象")
+    pets = payload.get("pets", payload.get("records"))
+    if pets is None:
+        raise WarehouseSnapshotError("缺少 pets 数组")
+    records = normalize_snapshot_pets(pets)
+    complete = _as_complete(payload.get("complete"), True)
+    return upsert_pets(records, db_path=db_path, mark_missing=complete, progress=progress)
+
+
 def sync_from_export(filepath: str | None = None, progress=None, db_path: str | None = None) -> dict:
     def report(message, current=0, total=0):
         if progress:

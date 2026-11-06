@@ -14,7 +14,9 @@
 | `backend/main.py` | HTTP 接口。从项目根目录启动，静态文件按当前目录找 `frontend/` |
 | `scripts/fetcher.py` | `.env` 令牌同步。不写盒子 |
 | `scripts/game_relay.py` | 本机 8195 改道观察，原样转发 |
-| `scripts/capture_sync.py` | 精灵列表，以及换盒、进化、孵蛋、捕捉 |
+| `scripts/capture_sync.py` | 精灵列表、换盒、进化、孵蛋、捕捉，以及仓库快照导入 |
+| `scripts/warehouse_push.py` | 收齐分页后推到 `ROCO_CLOUD_URL`，失败可重试 |
+| `scripts/capture_divert.py` | Windows 命令行改道，不打开网页 |
 | `scripts/pet_boxes.py` | 盒子快照与单次换位 |
 | `scripts/world_teams.py` | 登录包里的大世界三队 |
 | `scripts/game_release_click.py` | 只点击本机游戏窗口 |
@@ -30,7 +32,7 @@
 | HTTP 同步 | `uv run python scripts/fetcher.py` |
 | 更新子模块 | `./scripts/sync_conf.sh` |
 
-Windows 用 `start.bat`（纯 ASCII、CRLF，会申请管理员权限）。默认只监听 127.0.0.1:8000。`ROCO_HOST` / `ROCO_PORT`（或 `HOST` / `PORT`）可改绑定；`ROCO_CORS_ORIGINS` 追加跨域来源，不接受 `*`。Ubuntu 部署见 README 和 `deploy/`。
+Windows 用 `start.bat`（纯 ASCII、CRLF，会申请管理员权限）。默认只监听 127.0.0.1:8000。`ROCO_HOST` / `ROCO_PORT`（或 `HOST` / `PORT`）可改绑定；`ROCO_CORS_ORIGINS` 追加跨域来源，不接受 `*`。抓包默认只在 Windows 打开（`ROCO_ENABLE_CAPTURE`）。本机用 `ROCO_CLOUD_URL` 和 `ROCO_SYNC_TOKEN` 推送完整仓库，不 scp `warehouse.db`。Ubuntu 部署见 README 和 `deploy/`。
 
 ## 约定
 

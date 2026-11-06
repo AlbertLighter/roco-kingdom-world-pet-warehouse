@@ -19,6 +19,15 @@ from fastapi.staticfiles import StaticFiles
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _PROJECT_ROOT)
 
+from backend.runtime_config import (  # noqa: E402
+    capture_enabled,
+    divert_recording_allowed,
+    public_bind_warning,
+    resolve_bind,
+    resolve_cors_origins,
+    sync_token,
+)
+
 # ---- 日志配置 ----
 _LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "logs")
 os.makedirs(_LOG_DIR, exist_ok=True)
@@ -474,8 +483,6 @@ def _load_server_settings():
     """读取项目根目录的 .env，再读进程环境。ROCO_HOST / ROCO_PORT 优先于 HOST / PORT。"""
     from dotenv import load_dotenv
 
-    from backend.runtime_config import public_bind_warning, resolve_bind, resolve_cors_origins
-
     load_dotenv(os.path.join(_PROJECT_ROOT, ".env"))
     host, port = resolve_bind()
     origins, warnings = resolve_cors_origins(host, port)
@@ -495,19 +502,67 @@ app.add_middleware(
 )
 
 
+def _token_matches(supplied: str, expected: str) -> bool:
+    if not supplied or not expected:
+        return False
+    supplied_bytes = supplied.encode("utf-8")
+    expected_bytes = expected.encode("utf-8")
+    if len(supplied_bytes) != len(expected_bytes):
+        return False
+    return secrets.compare_digest(supplied_bytes, expected_bytes)
+
+
+def _request_path(request) -> str:
+    path = request.scope.get("path") or "/"
+    if len(path) > 1:
+        return path.rstrip("/")
+    return path
+
+
+def _tokens_for_path(path: str) -> tuple[str, ...]:
+    tokens = [API_TOKEN]
+    if path == "/api/sync/warehouse":
+        extra = sync_token()
+        if extra and extra not in tokens:
+            tokens.append(extra)
+    return tuple(tokens)
+
+
 @app.middleware("http")
 async def require_local_token(request, call_next):
     if request.method in ("GET", "HEAD", "OPTIONS"):
         return await call_next(request)
+    path = _request_path(request)
     supplied = request.headers.get("x-roco-token", "")
-    if not supplied or not secrets.compare_digest(supplied, API_TOKEN):
-        return JSONResponse(status_code=401, content={"detail": "需要本机令牌"})
-    return await call_next(request)
+    if supplied and any(_token_matches(supplied, token) for token in _tokens_for_path(path)):
+        return await call_next(request)
+    detail = "需要本机令牌或同步令牌" if path == "/api/sync/warehouse" else "需要本机令牌"
+    return JSONResponse(status_code=401, content={"detail": detail})
 
 
 @app.get("/api/token")
 def api_token():
     return {"token": API_TOKEN}
+
+
+@app.get("/api/runtime")
+def api_runtime():
+    """给页面决定要不要显示抓包入口。不包含令牌。"""
+    return {"capture_enabled": capture_enabled(), "platform": sys.platform}
+
+
+_CAPTURE_DISABLED = (
+    "抓包记录未启用，不会启动 WinDivert 改道。"
+    "非 Windows 默认关闭；Windows 上可设 ROCO_ENABLE_CAPTURE=0 关闭。"
+    "云端浏览仓库，完整名单用 POST /api/sync/warehouse 导入。"
+)
+_DIVERT_WINDOWS_ONLY = "WinDivert 改道只在 Windows 上启动。Linux 上这个接口不会开始改道。"
+
+
+def _require_capture_recording() -> None:
+    if capture_enabled():
+        return
+    raise HTTPException(status_code=403, detail=_CAPTURE_DISABLED)
 
 # ---- 全局异常日志中间件 ----
 @app.middleware("http")
@@ -2589,6 +2644,33 @@ def update_species_preferences(data: dict = Body(...)):
     return {"msg": "ok", "updated": updated}
 
 
+@app.post("/api/sync/warehouse")
+def api_sync_warehouse(payload: dict = Body(...)):
+    """导入一份完整仓库快照。
+
+    请求头 ``X-Roco-Token`` 可以是启动时写入的 captures/api.token，或环境变量 ROCO_SYNC_TOKEN。
+    正文见 ``import_warehouse_snapshot``：``pets`` 用 pet_record 的列，``complete`` 为真时按现有规则标记放生。
+    """
+    from scripts.capture_sync import WarehouseSnapshotError, import_warehouse_snapshot
+
+    if not _begin_sync("仓库快照导入"):
+        raise HTTPException(status_code=409, detail="同步任务正在运行中")
+    try:
+        result = import_warehouse_snapshot(payload, db_path=DB_PATH)
+    except WarehouseSnapshotError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        _end_sync()
+    _sync_logger.info(
+        "仓库快照导入：新增 %s，更新 %s，放生 %s，共 %s",
+        result.get("new", 0),
+        result.get("updated", 0),
+        result.get("released", 0),
+        result.get("total", 0),
+    )
+    return result
+
+
 @app.get("/api/packets")
 def api_list_packets(
     page: int = Query(1, ge=1),
@@ -2684,22 +2766,27 @@ def api_packets_record_status():
 
 @app.post("/api/packets/stop")
 def api_stop_packets():
-
-    """结束当前不限时的改道记录。"""
-    from scripts.game_relay import stop_relay
-
+    """结束当前不限时的改道记录。未启用抓包时拒绝，避免在云端碰 WinDivert。"""
+    _require_capture_recording()
+    try:
+        from scripts.game_relay import stop_relay
+    except ImportError as exc:
+        raise HTTPException(status_code=403, detail=_DIVERT_WINDOWS_ONLY) from exc
     return {"stopped": stop_relay()}
 
 
 @app.post("/api/packets/record")
 def api_record_packets(payload: dict | None = Body(default=None)):
-    """改道记录游戏消息。抓到精灵列表时写入仓库。也可回放 pcap。"""
+    """改道记录游戏消息。抓到精灵列表时写入仓库。也可回放 pcap。云端和未启用抓包时返回 403。"""
+    _require_capture_recording()
     from scripts.packet_store import record_divert, record_live
 
     payload = payload or {}
     mode = str(payload.get("mode") or "divert")
     if mode not in ("pcap", "divert"):
         raise HTTPException(status_code=400, detail="mode 只能是 divert 或 pcap")
+    if mode == "divert" and not divert_recording_allowed():
+        raise HTTPException(status_code=403, detail=_DIVERT_WINDOWS_ONLY)
     iface = str(payload.get("iface") or "")
     path = str(payload.get("path") or "")
     if mode == "pcap":
@@ -2758,6 +2845,10 @@ def main() -> None:
         print("已允许的跨域来源: " + ", ".join(extras), flush=True)
     for warning in SERVER_WARNINGS:
         print(warning, flush=True)
+    if not capture_enabled():
+        print("抓包记录未启用（非 Windows 默认关闭）。WinDivert 改道不会启动。", flush=True)
+    elif not divert_recording_allowed():
+        print("已打开抓包开关，但 WinDivert 改道仍只在 Windows 上启动。", flush=True)
     uvicorn.run(app, host=BIND_HOST, port=BIND_PORT)
 
 

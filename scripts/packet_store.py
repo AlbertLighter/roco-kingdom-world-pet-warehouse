@@ -427,6 +427,16 @@ def record_divert(seconds: int | None = None, progress=None) -> dict:
     collector = PetPageCollector()
     sync_result = {"new": 0, "updated": 0, "total": 0, "released": 0}
     pages_done = {"done": False}
+    push_box: dict = {"thread": None}
+
+    def start_push(records: list[dict]) -> None:
+        try:
+            from scripts.warehouse_push import start_warehouse_push
+
+            push_box["thread"] = start_warehouse_push(records, emit=emit)
+        except Exception as exc:
+            _sync_logger.error("启动仓库推送失败：%s", exc)
+            emit(f"启动仓库推送失败：{exc}。可执行 python scripts/warehouse_push.py 重试。")
 
     def on_frame(direction: str, command: int, opcode: int | None, payload: bytes, note: str) -> None:
         shown = opcode if opcode is not None else command
@@ -484,6 +494,7 @@ def record_divert(seconds: int | None = None, progress=None) -> dict:
             pages_done["done"] = True
             all_records, _done = collector.snapshot()
             result = upsert_pets(all_records, mark_missing=True, progress=emit)
+            start_push(all_records)
         else:
             result = upsert_pets(records, mark_missing=False, progress=emit)
         sync_result["new"] += result.get("new", 0)
@@ -499,6 +510,18 @@ def record_divert(seconds: int | None = None, progress=None) -> dict:
 
     emit("正在把游戏的 8195 改道到本机。若游戏已在线，会断开现有连接并等待重连；未开游戏则进游戏后自动改道。抓到精灵列表会自动写入仓库。点停止记录后结束。")
     stats = run_relay(seconds, lambda _opcode, _payload: None, progress=emit, on_frame=on_frame)
+    thread = push_box.get("thread")
+    if thread is not None:
+        thread.join(timeout=75)
+        push_result = getattr(thread, "push_result", {}).get("result")
+        if push_result is None:
+            push_result = {
+                "ok": False,
+                "skipped": False,
+                "reason": "推送尚未结束，可执行 python scripts/warehouse_push.py 重试",
+            }
+            emit(push_result["reason"])
+        sync_result["push"] = push_result
     summary = (
         f"改道记录 密钥={'有' if stats.get('key') else '无'}，"
         f"下行 {stats.get('s2c', 0)}，解密失败 {stats.get('failed', 0)}"

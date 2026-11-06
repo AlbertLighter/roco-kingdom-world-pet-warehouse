@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from collections.abc import Mapping
 from urllib.parse import urlparse
 
@@ -67,6 +68,39 @@ def local_origins(port: int) -> tuple[str, str, str]:
         f"http://localhost:{port}",
         f"http://[::1]:{port}",
     )
+
+
+_TRUTHY = {"1", "true", "yes", "on"}
+_FALSY = {"0", "false", "no", "off"}
+
+
+def capture_enabled(environ: Mapping[str, str] | None = None, *, platform_name: str | None = None) -> bool:
+    """抓包记录开关。非 Windows 默认关，Windows 默认开。``ROCO_ENABLE_CAPTURE`` 可覆盖。"""
+    raw = _env(environ).get("ROCO_ENABLE_CAPTURE")
+    if raw is not None and str(raw).strip():
+        text = str(raw).strip().lower()
+        if text in _TRUTHY:
+            return True
+        if text in _FALSY:
+            return False
+        return False
+    system = sys.platform if platform_name is None else platform_name
+    return system == "win32"
+
+
+def divert_recording_allowed(
+    environ: Mapping[str, str] | None = None,
+    *,
+    platform_name: str | None = None,
+) -> bool:
+    """WinDivert 改道只在 Windows 上、并且抓包开关打开时允许启动。"""
+    system = sys.platform if platform_name is None else platform_name
+    return system == "win32" and capture_enabled(environ, platform_name=system)
+
+
+def sync_token(environ: Mapping[str, str] | None = None) -> str:
+    """本机推送和云端导入共用的令牌。空字符串表示没配置。"""
+    return str(_env(environ).get("ROCO_SYNC_TOKEN") or "").strip()
 
 
 def public_bind_warning(host: str) -> str | None:

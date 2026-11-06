@@ -52,7 +52,9 @@
 | `/api/world_teams` | GET | 大世界三队 |
 | `/api/release_recommendations` | GET | 放生建议 |
 | `/api/packets` | GET | 抓包记录 |
-| `/api/packets/record` | POST | 开始改道记录 |
+| `/api/packets/record` | POST | 开始改道记录。未启用时 403 |
+| `/api/sync/warehouse` | POST | 导入完整仓库快照 |
+| `/api/runtime` | GET | 是否显示抓包入口 |
 | `/api/overlay` | POST | 打开盒子对照窗 |
 
 ### 常用命令

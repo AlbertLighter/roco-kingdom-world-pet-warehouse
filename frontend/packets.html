@@ -28,19 +28,21 @@
     <header class="app-header">
         <div class="header-eyebrow">PACKET LOG</div>
         <h1>抓包记录</h1>
-        <p class="header-subtitle">按 RocoMITM 的方式改道读取游戏连接，不限时长。抓到精灵列表会自动写入仓库。需要管理员启动服务，先点记录再进游戏，结束时再点停止记录。</p>
+        <p class="header-subtitle" data-capture-only hidden>按 RocoMITM 的方式改道读取游戏连接，不限时长。抓到精灵列表会自动写入仓库。需要管理员启动服务，先点记录再进游戏，结束时再点停止记录。收齐分页后，若配置了云端地址，会把仓库推上去。</p>
+        <p class="header-subtitle" data-capture-disabled hidden>这里只查看已经记下的消息。改道抓包在 Windows 本机完成，收齐仓库后推送到这台服务器。</p>
         <div class="header-actions" style="margin-top: 10px; display: flex; justify-content: center; gap: 10px; flex-wrap: wrap;">
             <a href="index.html" style="text-decoration: none; display: inline-block; background: #7f8c8d; color: white; padding: 10px 20px; border-radius: 4px;">← 返回仓库</a>
         </div>
     </header>
     <main>
         <div class="packet-panel" style="margin-bottom: 16px;">
+            <p data-capture-disabled hidden style="margin: 0 0 10px; color: #7f8c8d;">此环境不提供改道抓包。仓库由本机 Windows 收齐分页后推送，这里只浏览。</p>
             <div class="packet-toolbar">
                 <button id="importBtn" type="button" style="padding: 8px 14px; background: #1abc9c; color: #fff; border: 0; border-radius: 4px; cursor: pointer;">载入 data 导出</button>
-                <span id="recordStatus" style="align-self:center;font-size:0.9em;color:#7f8c8d;margin-right:8px;">记录状态：空闲</span>
-                <button id="recordBtn" type="button" style="padding: 8px 14px; background: #b9770e; color: #fff; border: 0; border-radius: 4px; cursor: pointer;">改道记录</button>
-                <input id="pcapPath" type="text" placeholder="pcap 路径" style="min-width: 180px;">
-                <button id="replayBtn" type="button" style="padding: 8px 14px; background: #0e6655; color: #fff; border: 0; border-radius: 4px; cursor: pointer;">回放并记录</button>
+                <span id="recordStatus" data-capture-only hidden style="align-self:center;font-size:0.9em;color:#7f8c8d;margin-right:8px;">记录状态：空闲</span>
+                <button id="recordBtn" data-capture-only data-capture-display="inline-block" hidden type="button" style="padding: 8px 14px; background: #b9770e; color: #fff; border: 0; border-radius: 4px; cursor: pointer; display: none;">改道记录</button>
+                <input id="pcapPath" data-capture-only data-capture-display="inline-block" hidden type="text" placeholder="pcap 路径" style="min-width: 180px; display: none;">
+                <button id="replayBtn" data-capture-only data-capture-display="inline-block" hidden type="button" style="padding: 8px 14px; background: #0e6655; color: #fff; border: 0; border-radius: 4px; cursor: pointer; display: none;">回放并记录</button>
                 <button id="clearBtn" type="button" style="padding: 8px 14px; background: #c0392b; color: #fff; border: 0; border-radius: 4px; cursor: pointer;">清空</button>
             </div>
             <div id="jobLog" style="font-size: 0.9em; color: #34495e; min-height: 1.2em;"></div>
@@ -83,7 +85,7 @@
             </section>
         </div>
     </main>
-    <script src="api.js?v=1"></script>
-    <script src="packets.js?v=3"></script>
+    <script src="api.js?v=2"></script>
+    <script src="packets.js?v=4"></script>
 </body>
 </html>

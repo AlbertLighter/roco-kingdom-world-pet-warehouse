@@ -7,7 +7,14 @@
 ## 整体架构图
 
 ```
-浏览器  仓库 / 繁育 / 放生 / 抓包
+Windows 本机
+   改道记录  scripts/game_relay.py
+             观察 NRC 的 TCP 8195，原样转发
+             解密后写入 captures/packets.db
+             精灵列表收齐后写入本机 warehouse.db
+             scripts/warehouse_push.py ──► POST /api/sync/warehouse
+
+浏览器（云端）  仓库 / 繁育 / 放生
    │  HTTP、SSE
    ▼
 backend/main.py
@@ -15,12 +22,7 @@ backend/main.py
    ├── warehouse.db          精灵、盒子、大世界队伍
    ├── roco_kingdom_world_conf/   只读游戏配置
    │
-   ├── 同步精灵  scripts/fetcher.py ──► 游戏 HTTP 接口（需要 .env）
-   │
-   └── 改道记录  scripts/game_relay.py
-                 本机观察 NRC 的 TCP 8195，原样转发
-                 解密后写入 captures/packets.db
-                 精灵列表、登录盒子、换盒、进化、孵蛋、捕捉写入 warehouse.db
+   └── 同步精灵  scripts/fetcher.py ──► 游戏 HTTP 接口（需要 .env，可选）
 ```
 
 ---
@@ -40,7 +42,9 @@ roco-kingdom-world-pet-warehouse/
 │   ├── fetcher.py             # HTTP 同步
 │   ├── api_client.py
 │   ├── game_relay.py          # 8195 改道与解密
-│   ├── capture_sync.py        # 精灵列表和会话内更新
+│   ├── capture_sync.py        # 精灵列表、会话内更新、仓库快照导入
+│   ├── warehouse_push.py      # 收齐后推到云端，失败可重试
+│   ├── capture_divert.py      # Windows 命令行改道，不打开网页
 │   ├── packet_store.py        # captures/packets.db
 │   ├── pet_boxes.py           # 盒子位置、放生、赠送
 │   ├── world_teams.py
@@ -55,7 +59,7 @@ roco-kingdom-world-pet-warehouse/
 └── uv.lock
 ```
 
-默认监听 `127.0.0.1:8000`。`ROCO_HOST` / `ROCO_PORT`（或 `HOST` / `PORT`）改绑定地址，`ROCO_CORS_ORIGINS` 追加跨域来源。WinDivert 改道仍只在 Windows 上使用。
+默认监听 `127.0.0.1:8000`。`ROCO_HOST` / `ROCO_PORT`（或 `HOST` / `PORT`）改绑定地址，`ROCO_CORS_ORIGINS` 追加跨域来源。WinDivert 改道只在 Windows 上启动。非 Windows 默认关闭抓包入口（`ROCO_ENABLE_CAPTURE`）。本机用 `ROCO_CLOUD_URL` 和 `ROCO_SYNC_TOKEN` 把收齐的仓库推到云端，不拷贝 `warehouse.db`。
 
 ---
 
@@ -63,7 +67,7 @@ roco-kingdom-world-pet-warehouse/
 
 ### 同步流程 (Sync)
 
-HTTP 同步和改道抓包最后都调用 `mark_absent_inactive`：名单里没有、且 `world_team` 为空的在库精灵才标成已放生。列表没拿全时两条路都不标。
+HTTP 同步、改道抓包收齐分页，以及 `POST /api/sync/warehouse` 在 `complete=true` 时，都调用 `mark_absent_inactive`：名单里没有、且 `world_team` 为空的在库精灵才标成已放生。列表没拿全时不标。快照的 `pets` 为空时也不标。
 
 ```
 fetcher.py
