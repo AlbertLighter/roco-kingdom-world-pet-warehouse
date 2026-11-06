@@ -1,7 +1,7 @@
 [project]
 name = "roco-kingdom-world-pet-warehouse"
 version = "0.1.0"
-description = "洛克王国：世界的本地精灵仓库，查看盒子、推荐繁育和放生。服务只监听本机。"
+description = "洛克王国：世界的精灵仓库，查看盒子、推荐繁育和放生。默认只监听本机，可用环境变量改绑定地址。"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
